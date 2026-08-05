@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM docker.m.daocloud.io/library/python:3.11-slim
 
 # opencv-python-headless 节省 ~40MB, 且不需要 GUI 依赖
 RUN apt-get update -qq && \

@@ -895,7 +895,7 @@ def admin_summary(
 def admin_requests(
     request: Request,
     offset: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=200),
+    limit: int = Query(10, ge=10, le=200),
     status: str | None = Query(default=None),
     authorization: str | None = Header(default=None),
     x_admin_token: str | None = Header(default=None),
@@ -1153,7 +1153,8 @@ ADMIN_HTML = """
           <div class="request-tools">
             <label for="request-page-size">每页显示</label>
             <select id="request-page-size" onchange="changeRequestPageSize()">
-              <option value="20" selected>20</option>
+              <option value="10" selected>10</option>
+              <option value="20">20</option>
               <option value="50">50</option>
               <option value="100">100</option>
               <option value="200">200</option>
@@ -1219,7 +1220,7 @@ ADMIN_HTML = """
     const tokenEl = document.getElementById('token');
     let activeTab = 'overview';
     let requestPage = 1;
-    let requestPageSize = 20;
+    let requestPageSize = 10;
     let requestPageCount = 1;
     let galleryPage = 1;
     let galleryPageSize = 10;
