@@ -1003,6 +1003,7 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             "mode": req.mode,
             "original_url": image_url,
             "output_url": image_url,
+            "parent_task_id": req.parent_task_id or "",
             "message": "no face detected, return original url",
         }
         _insert_request({
