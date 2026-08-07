@@ -96,7 +96,6 @@ ADMIN_TOKEN = os.environ.get("FACE_BLUR_ADMIN_TOKEN", API_TOKEN)
 DOWNLOAD_TIMEOUT = int(os.environ.get("FACE_BLUR_DL_TIMEOUT", "30"))
 MAX_IMAGE_BYTES = int(os.environ.get("FACE_BLUR_MAX_BYTES", str(20 * 1024 * 1024)))  # 20 MB
 IMAGE_TTL_HOURS = int(os.environ.get("FACE_BLUR_IMAGE_TTL_HOURS", "72"))
-DB_CACHE_TTL_HOURS = int(os.environ.get("FACE_BLUR_DB_CACHE_TTL_HOURS", str(IMAGE_TTL_HOURS)))
 CLEANUP_INTERVAL_SECONDS = int(os.environ.get("FACE_BLUR_CLEANUP_INTERVAL_SECONDS", "3600"))
 MAX_RETRIES = int(os.environ.get("FACE_BLUR_MAX_RETRIES", "2"))
 RETRY_BACKOFF_SECONDS = float(os.environ.get("FACE_BLUR_RETRY_BACKOFF_SECONDS", "0.6"))
@@ -167,8 +166,6 @@ def _init_db() -> None:
             conn.execute("ALTER TABLE requests ADD COLUMN retried INTEGER NOT NULL DEFAULT 0")
         if "request_json" not in existing_cols:
             conn.execute("ALTER TABLE requests ADD COLUMN request_json TEXT")
-        if "parent_task_id" not in existing_cols:
-            conn.execute("ALTER TABLE requests ADD COLUMN parent_task_id TEXT")
         if "task_id" not in existing_cols:
             conn.execute("ALTER TABLE requests ADD COLUMN task_id TEXT")
         if "response_json" not in existing_cols:
@@ -300,43 +297,49 @@ def _task_slot():
 
 
 def _insert_request(row: dict) -> None:
-    try:
-        with _db() as conn:
-            conn.execute(
-                """
-                INSERT INTO requests (
-                    task_id, created_at, status, mode, blocked, face_count, elapsed_ms,
-                    process_ms, input_bytes, output_bytes, image_url, output_url,
-                    output_file, parent_task_id, error, client_ip, user_agent, attempts, retried,
-                    request_json, response_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    row.get("task_id"),
-                    row.get("created_at", _utc_now()),
-                    row.get("status", "unknown"),
-                    row.get("mode"),
-                    int(row.get("blocked", 0)),
-                    int(row.get("face_count", 0)),
-                    float(row.get("elapsed_ms", 0)),
-                    float(row.get("process_ms", 0)),
-                    int(row.get("input_bytes", 0)),
-                    int(row.get("output_bytes", 0)),
-                    row.get("image_url"),
-                    row.get("output_url"),
-                    row.get("output_file"),
-                    row.get("parent_task_id"),
-                    row.get("error"),
-                    row.get("client_ip"),
-                    row.get("user_agent"),
-                    int(row.get("attempts", 1)),
-                    int(row.get("retried", 0)),
-                    row.get("request_json"),
-                    row.get("response_json"),
-                ),
-            )
-    except Exception as e:  # noqa: BLE001
-        log.warning("request log insert failed: %s", e)
+    for _attempt in range(3):
+        try:
+            with _db() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO requests (
+                        task_id, created_at, status, mode, blocked, face_count, elapsed_ms,
+                        process_ms, input_bytes, output_bytes, image_url, output_url,
+                        output_file, error, client_ip, user_agent, attempts, retried,
+                        request_json, response_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row.get("task_id"),
+                        row.get("created_at", _utc_now()),
+                        row.get("status", "unknown"),
+                        row.get("mode"),
+                        int(row.get("blocked", 0)),
+                        int(row.get("face_count", 0)),
+                        float(row.get("elapsed_ms", 0)),
+                        float(row.get("process_ms", 0)),
+                        int(row.get("input_bytes", 0)),
+                        int(row.get("output_bytes", 0)),
+                        row.get("image_url"),
+                        row.get("output_url"),
+                        row.get("output_file"),
+                        row.get("error"),
+                        row.get("client_ip"),
+                        row.get("user_agent"),
+                        int(row.get("attempts", 1)),
+                        int(row.get("retried", 0)),
+                        row.get("request_json"),
+                        row.get("response_json"),
+                    ),
+                )
+            return
+        except Exception as e:
+            msg = str(e)
+            if "locked" in msg.lower() and _attempt < 2:
+                time.sleep(0.05 * (_attempt + 1))
+                continue
+            log.warning("request log insert failed: %s", e)
+            return
 
 
 def _require_admin(
@@ -426,17 +429,19 @@ def _task_row(row: sqlite3.Row | dict) -> dict:
 
 def _static_files(offset: int = 0, limit: int | None = None,
                   include_task_id: bool = False) -> tuple[list[dict], int]:
-    paths = sorted(STATIC_DIR.glob("*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
-    total = len(paths)
+    entries = [(p, p.stat()) for p in STATIC_DIR.glob("*.jpg")]
+    entries.sort(key=lambda x: x[1].st_mtime, reverse=True)
+    total = len(entries)
     if limit is not None:
-        paths = paths[offset:offset + limit]
+        entries = entries[offset:offset + limit]
     else:
-        paths = paths[offset:]
-    # Batch lookup task_id for image click navigation
+        entries = entries[offset:]
+    files = []
+    # Batch lookup: output_file -> task_id for image click navigation
+    file_names = [p.name for p, _ in entries] if include_task_id else []
     task_map = {}
-    if include_task_id and paths:
+    if include_task_id and file_names:
         try:
-            file_names = [p.name for p in paths]
             with _db() as conn:
                 placeholders = ",".join("?" for _ in file_names)
                 rows = conn.execute(
@@ -445,10 +450,8 @@ def _static_files(offset: int = 0, limit: int | None = None,
                 ).fetchall()
                 task_map = {r["output_file"]: r["task_id"] for r in rows}
         except Exception as e:
-            log.warning("task_id lookup failed: %s", e)
-    files = []
-    for path in paths:
-        st = path.stat()
+            log.warning("task_id lookup for files failed: %s", e)
+    for path, st in entries:
         item = {
             "name": path.name,
             "size": st.st_size,
@@ -528,7 +531,6 @@ class FaceBlurRequest(BaseModel):
     # landmark_whole_face 模式专用参数
     face_grid_step: int = Field(14, ge=4, le=60)
     grid_n: int = Field(5, ge=3, le=11, description="关键点附近矩阵大小 (建议 3-7)")
-    parent_task_id: Optional[str] = Field(None, max_length=200, description="上游任务批次标记")
     callback_url: Optional[HttpUrl] = None
 
 
@@ -562,34 +564,68 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 # 工具
 # ---------------------------------------------------------------------------
 
-# C: requests.Session 连接池复用 (替代 urllib)
-_DL_SESSION = None
+# C: requests.Session 连接池复用 (thread-local, 线程安全)
+_DL_LOCAL = threading.local()
 
 def _dl_session():
-    global _DL_SESSION
-    if _DL_SESSION is None:
+    sess = getattr(_DL_LOCAL, "session", None)
+    if sess is None:
         import requests as _rq
-        _DL_SESSION = _rq.Session()
-        _adapter = _rq.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=50)
-        _DL_SESSION.mount("https://", _adapter)
-        _DL_SESSION.mount("http://", _adapter)
-    return _DL_SESSION
+        sess = _rq.Session()
+        _adapter = _rq.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=10)
+        sess.mount("https://", _adapter)
+        sess.mount("http://", _adapter)
+        _DL_LOCAL.session = sess
+    return sess
+
+# SSRF 防护: 禁止请求内网/保留地址
+import ipaddress as _ipaddress
+import socket as _socket_mod
+import urllib.parse as _urlparse_mod
+
+_BLOCKED_NETS = [
+    _ipaddress.IPv4Network(n) for n in (
+        "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12",
+        "192.168.0.0/16", "169.254.0.0/16", "0.0.0.0/8",
+        "100.64.0.0/10", "198.18.0.0/15",
+    )
+] + [
+    _ipaddress.IPv6Network(n) for n in (
+        "::1/128", "fc00::/7", "fe80::/10",
+    )
+]
+
+def _assert_public_url(url: str):
+    """检查 URL 目标是否为公网地址"""
+    try:
+        host = _urlparse_mod.urlparse(url).hostname
+        if not host:
+            raise HTTPException(400, "invalid URL: no hostname")
+        try:
+            ip = _ipaddress.ip_address(host)
+        except ValueError:
+            info = _socket_mod.getaddrinfo(host, None, type=_socket_mod.SOCK_STREAM)
+            ip = _ipaddress.ip_address(info[0][4][0])
+        if any(ip in net for net in _BLOCKED_NETS):
+            raise HTTPException(400, "blocked private/reserved address")
+    except HTTPException:
+        raise
 
 def _download(url: str, max_bytes: int = MAX_IMAGE_BYTES,
               timeout: int = DOWNLOAD_TIMEOUT) -> bytes:
     """下载 URL, 限制最大字节数 (复用连接池)"""
+    _assert_public_url(url)
     sess = _dl_session()
-    resp = sess.get(url, timeout=timeout, stream=True,
-                    headers={"User-Agent": "faceblur-api/1.0"})
-    resp.raise_for_status()
-    data = b""
-    for chunk in resp.iter_content(chunk_size=65536):
-        if not chunk:
-            break
-        data += chunk
-        if len(data) > max_bytes:
-            resp.close()
-            raise HTTPException(413, f"image too large (> {max_bytes} bytes)")
+    with sess.get(url, timeout=(5, timeout), stream=True,
+                  headers={"User-Agent": "faceblur-api/1.0"}) as resp:
+        resp.raise_for_status()
+        data = b""
+        for chunk in resp.iter_content(chunk_size=65536):
+            if not chunk:
+                break
+            data += chunk
+            if len(data) > max_bytes:
+                raise HTTPException(413, f"image too large (> {max_bytes} bytes)")
     return data
 
 
@@ -625,28 +661,31 @@ from collections import OrderedDict
 _RESPONSE_CACHE: OrderedDict = OrderedDict()
 _CACHE_MAX_SIZE = 200
 _CACHE_TTL_SECONDS = 300
+_CACHE_LOCK = threading.Lock()
 
 def _cache_key(image_url: str, req_json: str) -> str:
     return hashlib.md5((image_url + req_json).encode()).hexdigest()
 
 def _cache_get(key: str):
-    if key not in _RESPONSE_CACHE:
-        return None
-    entry = _RESPONSE_CACHE[key]
-    if time.time() - entry["ts"] > _CACHE_TTL_SECONDS:
-        del _RESPONSE_CACHE[key]
-        return None
-    _RESPONSE_CACHE.move_to_end(key)
-    return entry["resp"]
+    with _CACHE_LOCK:
+        if key not in _RESPONSE_CACHE:
+            return None
+        entry = _RESPONSE_CACHE[key]
+        if time.time() - entry["ts"] > _CACHE_TTL_SECONDS:
+            del _RESPONSE_CACHE[key]
+            return None
+        _RESPONSE_CACHE.move_to_end(key)
+        return entry["resp"]
 
 def _cache_set(key: str, resp: dict):
-    if key in _RESPONSE_CACHE:
-        _RESPONSE_CACHE.move_to_end(key)
-        _RESPONSE_CACHE[key] = {"ts": time.time(), "resp": resp}
-    else:
-        if len(_RESPONSE_CACHE) >= _CACHE_MAX_SIZE:
-            _RESPONSE_CACHE.popitem(last=False)
-        _RESPONSE_CACHE[key] = {"ts": time.time(), "resp": resp}
+    with _CACHE_LOCK:
+        if key in _RESPONSE_CACHE:
+            _RESPONSE_CACHE.move_to_end(key)
+            _RESPONSE_CACHE[key] = {"ts": time.time(), "resp": resp}
+        else:
+            if len(_RESPONSE_CACHE) >= _CACHE_MAX_SIZE:
+                _RESPONSE_CACHE.popitem(last=False)
+            _RESPONSE_CACHE[key] = {"ts": time.time(), "resp": resp}
 
 # DB 持久缓存 (L2): 原始URL->打码后URL 映射, 进程重启不丢
 def _db_cache_get(cache_key: str):
@@ -753,23 +792,29 @@ def face_blur(req: FaceBlurRequest, request: Request):
     _cached = _cache_get(_ck)
     if _cached is not None:
         log.info("[cache] L1 hit")
-        return {**_cached, "task_id": task_id, "parent_task_id": req.parent_task_id or ""}
+        return {**_cached, "task_id": task_id}
 
     # L2: DB 持久缓存
     _db_url = _db_cache_get(_ck)
     if _db_url is not None:
-        # 构造与正常打码一致的响应
         log.info("[cache] L2 hit")
+        _cache_set(_ck, {
+            "ok": True, "blocked": True, "face_count": -1,
+            "elapsed_ms": 0, "process_ms": 0, "mode": req.mode,
+            "output_url": _db_url, "original_url": str(req.image_url),
+            "size": 0, "cached": True,
+        })
         return {
             "task_id": task_id,
             "ok": True,
             "blocked": True,
             "face_count": -1,
             "elapsed_ms": 0,
+            "process_ms": 0,
             "mode": req.mode,
             "output_url": _db_url,
             "original_url": str(req.image_url),
-            "parent_task_id": req.parent_task_id or "",
+            "size": 0,
             "cached": True,
         }
 
@@ -783,8 +828,8 @@ def face_blur(req: FaceBlurRequest, request: Request):
             "status": "rejected",
             "mode": req.mode,
             "image_url": str(req.image_url),
-            "error": str(exc.detail),
             "parent_task_id": req.parent_task_id or "",
+            "error": str(exc.detail),
             "client_ip": request.client.host if request.client else None,
             "user_agent": request.headers.get("user-agent", "")[:300],
             "request_json": _request_record(req, request),
@@ -817,7 +862,7 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
         _insert_request({
             "task_id": task_id, "status": "download_error", "mode": req.mode,
             "image_url": image_url, "error": str(e.detail),
-            "parent_task_id": req.parent_task_id or "",
+            "parent_task_id": parent_task_id,
             "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
             "client_ip": client_ip, "user_agent": user_agent,
             "attempts": attempts, "retried": attempts > 1,
@@ -833,7 +878,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             "status": "download_error",
             "mode": req.mode,
             "image_url": image_url,
-            "parent_task_id": req.parent_task_id or "",
             "error": str(e),
             "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
             "client_ip": client_ip,
@@ -880,7 +924,7 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             "mode": req.mode,
             "image_url": image_url,
             "input_bytes": len(img_bytes),
-            "parent_task_id": req.parent_task_id or "",
+            "parent_task_id": parent_task_id,
             "error": str(e),
             "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
             "client_ip": client_ip,
@@ -900,7 +944,7 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             "mode": req.mode,
             "image_url": image_url,
             "input_bytes": len(img_bytes),
-            "parent_task_id": req.parent_task_id or "",
+            "parent_task_id": parent_task_id,
             "error": str(e),
             "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
             "client_ip": client_ip,
@@ -941,7 +985,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             "input_bytes": len(img_bytes),
             "image_url": image_url,
             "output_url": image_url,
-            "parent_task_id": req.parent_task_id or "",
             "client_ip": client_ip,
             "user_agent": user_agent,
             "attempts": attempts,
@@ -973,7 +1016,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
         "mode": req.mode,
         "original_url": image_url,
         "output_url": output_url,
-        "parent_task_id": req.parent_task_id or "",
         "size": len(result["image_bytes"]),
     }
     _insert_request({
@@ -989,7 +1031,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
         "image_url": image_url,
         "output_url": output_url,
         "output_file": out_name,
-        "parent_task_id": req.parent_task_id or "",
         "client_ip": client_ip,
         "user_agent": user_agent,
         "attempts": attempts,
@@ -1095,7 +1136,6 @@ def admin_requests(
     offset: int = Query(0, ge=0),
     limit: int = Query(10, ge=10, le=200),
     status: str | None = Query(default=None),
-    parent_task_id: str | None = Query(default=None),
     authorization: str | None = Header(default=None),
     x_admin_token: str | None = Header(default=None),
     token: str | None = Query(default=None),
@@ -1106,10 +1146,6 @@ def admin_requests(
     if status:
         where = " WHERE status = ?"
         params.append(status)
-    if parent_task_id:
-        prefix = " AND " if where else " WHERE "
-        where += prefix + "parent_task_id = ?"
-        params.append(parent_task_id)
     with _db() as conn:
         total = conn.execute(f"SELECT COUNT(*) FROM requests{where}", params).fetchone()[0]
         rows = [dict(r) for r in conn.execute(
@@ -1215,7 +1251,7 @@ def admin_set_settings(
 
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page():
-    return HTMLResponse(content=ADMIN_HTML, headers={"Cache-Control": "no-store, max-age=0"})
+    return HTMLResponse(ADMIN_HTML, headers={"Cache-Control": "no-store, max-age=0"})
 
 
 ADMIN_HTML = """
@@ -1258,7 +1294,7 @@ ADMIN_HTML = """
     .tab { border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--muted); padding: 10px 16px; cursor: pointer; }
     .tab.active { border-bottom-color: var(--accent); color: var(--ink); font-weight: 700; }
     .tab-view[hidden] { display: none; }
-    .grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
     .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; box-shadow: var(--shadow); min-height: 104px; }
     .label { color: var(--muted); font-size: 13px; }
     .metric { margin-top: 8px; font-size: 30px; font-weight: 700; }
@@ -1291,12 +1327,13 @@ ADMIN_HTML = """
     .task-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
     .task-heading h2 { margin-bottom: 7px; }
     .task-heading code { color: var(--muted); word-break: break-all; }
-    .task-facts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; margin-bottom: 18px; border: 1px solid var(--line); background: var(--line); }
+    .task-facts { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; margin-bottom: 18px; border: 1px solid var(--line); background: var(--line); }
     .fact { min-height: 78px; padding: 12px; background: white; }
     .fact strong { display: block; margin-top: 7px; word-break: break-word; }
     .task-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
     .image-preview { border: 1px solid var(--line); background: white; }
-    .image-preview h3, .json-block h3 { margin: 0; padding: 11px 13px; border-bottom: 1px solid var(--line); font: 600 13px "Microsoft YaHei", Arial, sans-serif; }
+    .image-preview h3, .json-block h3 { margin: 0; padding: 11px 13px; border-bottom: 1px solid var(--line); font: 600 13px "Microsoft YaHei", Arial, sans-serif; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .image-preview h3 .img-meta { font: 400 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
     .image-preview img { display: block; width: 100%; height: 320px; object-fit: contain; background: #efede7; }
     .image-empty { display: grid; height: 320px; place-items: center; color: var(--muted); }
     .task-json { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
@@ -1309,7 +1346,7 @@ ADMIN_HTML = """
   <main class="shell">
     <header>
       <div>
-        <a href="/admin" style="text-decoration:none;color:inherit"><h1>FaceBlur Admin</h1></a>
+        <h1>FaceBlur Admin</h1>
         <div class="sub">Live request log, static image storage, cleanup control</div>
       </div>
       <div class="auth">
@@ -1325,7 +1362,7 @@ ADMIN_HTML = """
       <button class="tab" id="task-tab" data-tab="task" onclick="showTab('task')" hidden>任务详情</button>
     </nav>
     <div class="task-search">
-      <input id="task-search" type="search" placeholder="输入任务 ID 或父任务ID 定位" aria-label="任务 ID" />
+      <input id="task-search" type="search" placeholder="输入任务 ID 定位请求" aria-label="任务 ID" />
       <button class="btn secondary" onclick="findTask()">查询任务</button>
     </div>
 
@@ -1366,13 +1403,13 @@ ADMIN_HTML = """
           </div>
         </div>
         <table>
-          <thead><tr><th>时间</th><th>任务 ID</th><th>父任务ID</th><th>状态</th><th>模式</th><th>来源</th><th>耗时</th><th>操作</th></tr></thead>
+          <thead><tr><th>时间</th><th>任务 ID</th><th>状态</th><th>模式</th><th>来源</th><th>耗时</th><th>操作</th></tr></thead>
           <tbody id="requests"></tbody>
         </table>
         <div class="pager">
           <button class="btn secondary" id="request-prev" onclick="changeRequestPage(-1)">上一页</button>
           <span class="pager-info" id="request-page-info">第 1 / 1 页</span>
-          <input type="number" id="request-jump-page" min="1" placeholder="页" style="width:48px;text-align:center" onkeydown="if(event.key==='Enter')jumpRequestPage()">
+          <input type="number" id="request-jump-page" min="1" placeholder="页数" style="width:60px;text-align:center" onkeydown="if(event.key==='Enter')jumpRequestPage()" />
           <button class="btn secondary" onclick="jumpRequestPage()">跳转</button>
           <button class="btn secondary" id="request-next" onclick="changeRequestPage(1)">下一页</button>
         </div>
@@ -1408,7 +1445,7 @@ ADMIN_HTML = """
         <div class="pager">
           <button class="btn secondary" id="gallery-prev" onclick="changeGalleryPage(-1)">上一页</button>
           <span class="pager-info" id="gallery-page-info">第 1 / 1 页</span>
-          <input type="number" id="gallery-jump-page" min="1" placeholder="页" style="width:48px;text-align:center" onkeydown="if(event.key==='Enter')jumpGalleryPage()">
+          <input type="number" id="gallery-jump-page" min="1" placeholder="页数" style="width:60px;text-align:center" onkeydown="if(event.key==='Enter')jumpGalleryPage()" />
           <button class="btn secondary" onclick="jumpGalleryPage()">跳转</button>
           <button class="btn secondary" id="gallery-next" onclick="changeGalleryPage(1)">下一页</button>
         </div>
@@ -1443,6 +1480,12 @@ ADMIN_HTML = """
     function headers(){ const t = tokenEl.value.trim(); return t ? {'X-Admin-Token': t} : {}; }
     function setStatus(text){ document.getElementById('status').textContent = text; }
     function fmtBytes(n){ if(!n) return '0 B'; const u=['B','KB','MB','GB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return `${n.toFixed(i?1:0)} ${u[i]}`; }
+    function showImgSize(img){
+      const el = document.getElementById(img.id + "-size");
+      const dims = img.naturalWidth + " × " + img.naturalHeight + " px";
+      const bytes = parseInt(img.dataset.size || 0);
+      el.textContent = dims + (bytes ? " · " + fmtBytes(bytes) : "");
+    }
     function escapeHtml(value){
       return String(value ?? '').replace(/[&<>"']/g, char => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -1497,31 +1540,21 @@ ADMIN_HTML = """
       };
     }
     function jsonView(value){ return escapeHtml(JSON.stringify(value, null, 2)); }
-    function showImgSize(img){
-      const el = document.getElementById(img.id + "-size");
-      const dims = img.naturalWidth + " × " + img.naturalHeight + " px";
-      const bytes = parseInt(img.dataset.size || 0);
-      el.textContent = dims + (bytes ? " · " + fmtBytes(bytes) : "");
-    }
     function imageView(id, label, url, sizeBytes){
       const meta = id + "-size";
-      const sizeText = sizeBytes ? ` \xb7 ${fmtBytes(sizeBytes)}` : "";
+      const sizeText = sizeBytes ? ` · ${fmtBytes(sizeBytes)}` : "";
       return `<div class="image-preview"><h3><span>${label}</span><span class="img-meta" id="${meta}">${sizeText}</span></h3>${url
         ? `<img id="${id}" src="${escapeHtml(url)}" alt="${label}" loading="lazy" onload="showImgSize(this)" data-size="${sizeBytes || 0}" />`
         : `<div class="image-empty" id="${id}">无可预览图片</div>`}</div>`;
     }
     async function loadRequests(){
-      let url = '/api/admin/requests?offset=' + ((requestPage - 1) * requestPageSize) + '&limit=' + requestPageSize;
-      const q = document.getElementById('task-search').value.trim();
-      if(q && q.length !== 32) url += '&parent_task_id=' + encodeURIComponent(q);
-      const d = await api(url);
+      const d = await api(`/api/admin/requests?offset=${(requestPage - 1) * requestPageSize}&limit=${requestPageSize}`);
       requestPageCount = Math.max(1, Math.ceil(d.total / requestPageSize));
       if(requestPage > requestPageCount){ requestPage = requestPageCount; return loadRequests(); }
       document.getElementById('requests').innerHTML = d.items.map(x => `
         <tr>
           <td>${fmtBeijingTime(x.created_at)}</td>
           <td><div class="task-id" title="${escapeHtml(x.task_id)}">${escapeHtml(x.task_id || '-')}</div></td>
-          <td>${escapeHtml(x.parent_task_id || "-")}</td>
           <td><span class="pill ${x.status === 'ok' ? '' : 'err'}">${x.status}</span></td>
           <td>${escapeHtml(x.mode || '-')}</td>
           <td>${escapeHtml(x.client_ip || '-')}</td>
@@ -1539,12 +1572,8 @@ ADMIN_HTML = """
       await loadRequests();
     }
     async function jumpRequestPage(){
-      const p = parseInt(document.getElementById("request-jump-page").value);
+      const p = parseInt(document.getElementById('request-jump-page').value);
       if(p >= 1 && p <= requestPageCount){ requestPage = p; await loadRequests(); }
-    }
-    async function jumpGalleryPage(){
-      const p = parseInt(document.getElementById("gallery-jump-page").value);
-      if(p >= 1 && p <= galleryPageCount){ galleryPage = p; await loadGalleryPage(); window.scrollTo({top: 0, behavior: "smooth"}); }
     }
     async function changeRequestPageSize(){
       requestPageSize = Number(document.getElementById('request-page-size').value);
@@ -1555,10 +1584,11 @@ ADMIN_HTML = """
       const d = await api('/api/admin/files?offset=0&limit=10');
       document.getElementById('files').innerHTML = d.items.map(x => {
         const tid = x.task_id || '';
-        const onclick = tid ? `onclick="showTaskDetail('${escapeHtml(tid)}')"` : '';
-        const style = tid ? 'style="cursor:pointer"' : '';
-        const title = tid ? 'title="点击查看任务详情"' : '';
-        return `<div class="file" ${onclick} ${style} ${title}><img src="${x.url}" loading="lazy" /><div>${x.name}<br>${fmtBytes(x.size)}</div></div>`;
+        if(tid){
+          const esc = escapeHtml(tid);
+          return '<div class="file" onclick="showTaskDetail('' + esc + '')" style="cursor:pointer" title="点击查看任务详情"><img src="' + x.url + '" loading="lazy" /><div>' + x.name + '<br>' + fmtBytes(x.size) + '</div></div>';
+        }
+        return '<div class="file"><img src="' + x.url + '" loading="lazy" /><div>' + x.name + '<br>' + fmtBytes(x.size) + '</div></div>';
       }).join('') || '<div class="status">暂无图片</div>';
     }
     async function showTaskDetail(taskId){
@@ -1600,10 +1630,8 @@ ADMIN_HTML = """
       } catch(e) { setStatus(`任务查询失败: ${e.message}`); }
     }
     function findTask(){
-      const q = document.getElementById('task-search').value.trim();
-      if(!q) return;
-      if(q.length === 32) showTaskDetail(q);
-      else { requestPage = 1; loadRequests(); }
+      const taskId = document.getElementById('task-search').value.trim();
+      if(taskId) showTaskDetail(taskId);
     }
     async function copyTaskId(){
       const taskId = document.getElementById('task-search').value.trim();
@@ -1624,13 +1652,8 @@ ADMIN_HTML = """
       const d = await api(`/api/admin/files?offset=${(galleryPage - 1) * galleryPageSize}&limit=${galleryPageSize}`);
       galleryPageCount = Math.max(1, Math.ceil(d.total / galleryPageSize));
       if(galleryPage > galleryPageCount){ galleryPage = galleryPageCount; return loadGalleryPage(); }
-      document.getElementById('gallery-files').innerHTML = d.items.map(x => {
-        const tid = x.task_id || '';
-        const onclick = tid ? `onclick="showTaskDetail('${escapeHtml(tid)}')"` : '';
-        const style = tid ? 'style="cursor:pointer"' : '';
-        const title = tid ? 'title="点击查看任务详情"' : '';
-        return `<div class="file" ${onclick} ${style} ${title}><img src="${x.url}" loading="lazy" /><div>${x.name}<br>${fmtBytes(x.size)}</div></div>`;
-      }).join('') || '<div class="status">暂无图片</div>';
+      document.getElementById('gallery-files').innerHTML = d.items.map(x => `
+        <div class="file" onclick="${x.task_id ? `showTaskDetail('${escapeHtml(x.task_id)}')` : ''}" style="${x.task_id ? 'cursor:pointer' : ''}" title="${x.task_id ? '点击查看任务详情' : ''}"><img src="${x.url}" loading="lazy" /><div>${x.name}<br>${fmtBytes(x.size)}</div></div>`).join('') || '<div class="status">暂无图片</div>';
       document.getElementById('gallery-page-info').textContent = `第 ${galleryPage} / ${galleryPageCount} 页，共 ${d.total} 张`;
       document.getElementById('gallery-prev').disabled = galleryPage <= 1;
       document.getElementById('gallery-next').disabled = galleryPage >= galleryPageCount;
@@ -1642,6 +1665,10 @@ ADMIN_HTML = """
       galleryPage = nextPage;
       await loadGalleryPage();
       window.scrollTo({top: 0, behavior: 'smooth'});
+    }
+    async function jumpGalleryPage(){
+      const p = parseInt(document.getElementById('gallery-jump-page').value);
+      if(p >= 1 && p <= galleryPageCount){ galleryPage = p; await loadGalleryPage(); window.scrollTo({top: 0, behavior: 'smooth'}); }
     }
     async function changeGalleryPageSize(){
       galleryPageSize = Number(document.getElementById('gallery-page-size').value);

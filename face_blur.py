@@ -144,7 +144,7 @@ class FaceDetector:
         return out
 
     def detect_multiscale(self, img_bgr: np.ndarray,
-                          target_long_sides: tuple[int, ...] = (640, 1024, 1600),
+                          target_long_sides: tuple[int, ...] = (640, 1600),
                           use_haar_fallback: bool = False) -> List[FaceBox]:
         """
         多尺度检测: 原图 + 多个归一化长边尺寸, 合并去重.
@@ -482,11 +482,17 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
         raise ValueError("无法解码图片, 请检查输入格式")
 
     h, w = img.shape[:2]
+    # A: 大图先缩小到 1920px 长边，加速多尺度检测
+    _max_side = 1920
+    if max(h, w) > _max_side:
+        _scale = _max_side / max(h, w)
+        img = cv2.resize(img, (int(w * _scale), int(h * _scale)), interpolation=cv2.INTER_AREA)
+        h, w = img.shape[:2]
     detector = _get_detector(score_threshold)
 
-    # landmark / landmark_whole_face 模式需要 landmark 信息, 走 detect_multiscale + box 内精检
+    # landmark 模式: detect_multiscale (鲁棒) + per-face detect_with_landmarks (取关键点)
     if mode in ("landmark", "landmark_whole_face"):
-        faces = detector.detect_multiscale(img)
+        faces_list = detector.detect_multiscale(img)
         # 默认参数区分两种 landmark 模式
         if mode == "landmark_whole_face":
             dot_radius = int(blur_params.get("dot_radius", 3))
@@ -501,31 +507,32 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
             face_grid_step = None
             grid_n = None
 
-        for face in faces:
+        for face in faces_list:
             box = face.expand(w, h, ratio=expand_ratio)
             bx, by, bw, bh = box.x, box.y, box.w, box.h
-            # 在原图裁出该 face 的小区域, 重新 detect 拿精确 landmark
+            if bw < 20 or bh < 20:
+                continue
+            # 子区域 detect_with_landmarks 取关键点（比裸 _detector.detect 更干净）
             x1, y1 = max(0, bx), max(0, by)
             x2, y2 = min(w, bx + bw), min(h, by + bh)
             if x2 - x1 < 20 or y2 - y1 < 20:
                 continue
             sub = img[y1:y2, x1:x2]
-            sub_h, sub_w = sub.shape[:2]
-            prev_size = detector._last_size
-            detector._detector.setInputSize((sub_w, sub_h))
-            _, sub_faces = detector._detector.detect(sub)
-            detector._detector.setInputSize(prev_size)
-            detector._last_size = prev_size
             landmarks = None
-            if sub_faces is not None and len(sub_faces) > 0:
-                f0 = sub_faces[0]
-                landmarks = {
-                    "right_eye":  (float(f0[4])  + x1, float(f0[5])  + y1),
-                    "left_eye":   (float(f0[6])  + x1, float(f0[7])  + y1),
-                    "nose":       (float(f0[8])  + x1, float(f0[9])  + y1),
-                    "right_mouth": (float(f0[10]) + x1, float(f0[11]) + y1),
-                    "left_mouth":  (float(f0[12]) + x1, float(f0[13]) + y1),
-                }
+            try:
+                sub_faces = detector.detect_with_landmarks(sub)
+                if sub_faces:
+                    f0 = sub_faces[0]
+                    lm = f0["landmarks"]
+                    landmarks = {
+                        "right_eye":  (lm["right_eye"][0] + x1, lm["right_eye"][1] + y1),
+                        "left_eye":   (lm["left_eye"][0] + x1, lm["left_eye"][1] + y1),
+                        "nose":       (lm["nose"][0] + x1, lm["nose"][1] + y1),
+                        "right_mouth": (lm["right_mouth"][0] + x1, lm["right_mouth"][1] + y1),
+                        "left_mouth":  (lm["left_mouth"][0] + x1, lm["left_mouth"][1] + y1),
+                    }
+            except Exception:
+                pass
             region = img[by:by + bh, bx:bx + bw]
             if mode == "landmark_whole_face":
                 region = _apply_landmark_whole_face_with_landmarks(
@@ -541,7 +548,6 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
                     region_box=(bx, by, bw, bh),
                 )
             img[by:by + bh, bx:bx + bw] = region
-            face.landmarks = landmarks or {}
     else:
         faces = detector.detect_multiscale(img)
         blur_fn = BLUR_MODES[mode]
@@ -557,16 +563,24 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
         raise RuntimeError("结果图片编码失败")
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
+    # D 修复: landmark 模式 faces 是 dict 列表，普通模式是 FaceBox 列表
+    if mode in ("landmark", "landmark_whole_face"):
+        _face_count = len(faces_list)
+    else:
+        _face_count = len(faces)
     result = {
         "image_bytes": buf.tobytes(),
         "format": "jpg",
         "mode": mode,
-        "face_count": len(faces),
+        "face_count": _face_count,
         "elapsed_ms": round(elapsed_ms, 2),
     }
     if return_faces:
-        result["faces"] = [asdict(f) if hasattr(f, "__dataclass_fields__") else dict(f)
-                            for f in faces]
+        if mode in ("landmark", "landmark_whole_face"):
+            result["faces"] = [asdict(f) if hasattr(f, "__dataclass_fields__") else dict(f) for f in faces_list]
+        else:
+            result["faces"] = [asdict(f) if hasattr(f, "__dataclass_fields__") else dict(f)
+                                for f in faces]
     return result
 
 

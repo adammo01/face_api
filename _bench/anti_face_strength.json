@@ -1,0 +1,125 @@
+{
+  "image": "202608061049233114_rXEZe",
+  "rankings": [
+    {
+      "ssim": 0.879,
+      "red_pct": 0.0,
+      "black_pct": 13.65,
+      "lap": 550.5,
+      "ref_lap": 519.2,
+      "lap_residual_pct": 106.0,
+      "mode": "solid",
+      "engine": "cv"
+    },
+    {
+      "ssim": 0.884,
+      "red_pct": 0.0,
+      "black_pct": 13.3,
+      "lap": 554.1,
+      "ref_lap": 519.2,
+      "lap_residual_pct": 106.7,
+      "mode": "solid",
+      "engine": "ort"
+    },
+    {
+      "ssim": 0.896,
+      "red_pct": 2.96,
+      "black_pct": 3.99,
+      "lap": 827.4,
+      "ref_lap": 519.2,
+      "lap_residual_pct": 159.4,
+      "mode": "anti_face",
+      "engine": "cv"
+    },
+    {
+      "ssim": 0.901,
+      "red_pct": 2.85,
+      "black_pct": 4.03,
+      "lap": 806.0,
+      "ref_lap": 519.2,
+      "lap_residual_pct": 155.2,
+      "mode": "anti_face",
+      "engine": "ort"
+    },
+    {
+      "ssim": 0.918,
+      "red_pct": 2.3,
+      "black_pct": 3.69,
+      "lap": 729.5,
+      "ref_lap": 519.2,
+      "lap_residual_pct": 140.5,
+      "mode": "landmark_whole_face",
+      "engine": "cv"
+    },
+    {
+      "ssim": 0.922,
+      "red_pct": 2.07,
+      "black_pct": 3.71,
+      "lap": 715.9,
+      "ref_lap": 519.2,
+      "lap_residual_pct": 137.9,
+      "mode": "landmark_whole_face",
+      "engine": "ort"
+    },
+    {
+      "ssim": 0.936,
+      "red_pct": 1.62,
+      "black_pct": 3.75,
+      "lap": 671.0,
+      "ref_lap": 519.2,
+      "lap_residual_pct": 129.2,
+      "mode": "landmark",
+      "engine": "ort"
+    },
+    {
+      "ssim": 0.947,
+      "red_pct": 0.03,
+      "black_pct": 3.85,
+      "lap": 536.0,
+      "ref_lap": 519.2,
+      "lap_residual_pct": 103.2,
+      "mode": "pixelate",
+      "engine": "cv"
+    },
+    {
+      "ssim": 0.949,
+      "red_pct": 0.02,
+      "black_pct": 3.79,
+      "lap": 530.0,
+      "ref_lap": 519.2,
+      "lap_residual_pct": 102.1,
+      "mode": "pixelate",
+      "engine": "ort"
+    },
+    {
+      "ssim": 0.963,
+      "red_pct": 0.02,
+      "black_pct": 3.74,
+      "lap": 488.1,
+      "ref_lap": 519.2,
+      "lap_residual_pct": 94.0,
+      "mode": "gaussian",
+      "engine": "cv"
+    },
+    {
+      "ssim": 0.965,
+      "red_pct": 0.02,
+      "black_pct": 3.75,
+      "lap": 490.1,
+      "ref_lap": 519.2,
+      "lap_residual_pct": 94.4,
+      "mode": "gaussian",
+      "engine": "ort"
+    },
+    {
+      "ssim": 0.978,
+      "red_pct": 0.25,
+      "black_pct": 3.85,
+      "lap": 526.0,
+      "ref_lap": 519.2,
+      "lap_residual_pct": 101.3,
+      "mode": "landmark",
+      "engine": "cv"
+    }
+  ]
+}

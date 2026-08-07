@@ -20,3 +20,9 @@ _probe*.py
 _show*.py
 remote_deploy.py
 admin_token.txt
+.gstack/
+_bench/review_images/
+test_images/
+_bench/review_images/
+test_images/
+复核测试/*/

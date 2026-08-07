@@ -1,0 +1,22 @@
+[
+  {
+    "label": "gaussian@c4",
+    "total": 60,
+    "ok": 60,
+    "failed": 0,
+    "fail_rate": 0.0,
+    "qps": 18.39,
+    "total_seconds": 3.26,
+    "latency_ms": {
+      "min": 135.71,
+      "p50": 201.57,
+      "p90": 272.99,
+      "p95": 297.36,
+      "p99": 375.2,
+      "max": 375.2
+    },
+    "face_count_avg": 3.0,
+    "cache_hits": 0,
+    "errors_sample": []
+  }
+]

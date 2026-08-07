@@ -1,0 +1,130 @@
+[
+  {
+    "mode": "solid",
+    "engine": "cv",
+    "ssim": 0.879,
+    "red": 0.0005787037037037037,
+    "black": 13.654947916666666,
+    "score": 12.1
+  },
+  {
+    "mode": "solid",
+    "engine": "ort",
+    "ssim": 0.884,
+    "red": 0.0005787037037037037,
+    "black": 13.295536747685185,
+    "score": 11.6
+  },
+  {
+    "mode": "pixelate_dots",
+    "engine": "cv",
+    "ssim": 0.895,
+    "red": 2.9955150462962963,
+    "black": 3.6262297453703707,
+    "score": 10.5
+  },
+  {
+    "mode": "anti_face",
+    "engine": "cv",
+    "ssim": 0.896,
+    "red": 2.9602141203703707,
+    "black": 3.987449363425926,
+    "score": 10.4
+  },
+  {
+    "mode": "gaussian_dots",
+    "engine": "cv",
+    "ssim": 0.897,
+    "red": 3.0052083333333335,
+    "black": 3.507523148148148,
+    "score": 10.3
+  },
+  {
+    "mode": "pixelate_dots",
+    "engine": "ort",
+    "ssim": 0.899,
+    "red": 2.8489221643518516,
+    "black": 3.6325593171296293,
+    "score": 10.1
+  },
+  {
+    "mode": "anti_face",
+    "engine": "ort",
+    "ssim": 0.901,
+    "red": 2.845015914351852,
+    "black": 4.025426793981481,
+    "score": 9.9
+  },
+  {
+    "mode": "gaussian_dots",
+    "engine": "ort",
+    "ssim": 0.901,
+    "red": 2.8645109953703707,
+    "black": 3.554904513888889,
+    "score": 9.9
+  },
+  {
+    "mode": "landmark_whole_face",
+    "engine": "cv",
+    "ssim": 0.918,
+    "red": 2.297923900462963,
+    "black": 3.689887152777778,
+    "score": 8.2
+  },
+  {
+    "mode": "landmark_whole_face",
+    "engine": "ort",
+    "ssim": 0.922,
+    "red": 2.073386863425926,
+    "black": 3.7125651041666665,
+    "score": 7.8
+  },
+  {
+    "mode": "landmark",
+    "engine": "ort",
+    "ssim": 0.936,
+    "red": 1.6187427662037037,
+    "black": 3.748878761574074,
+    "score": 6.4
+  },
+  {
+    "mode": "pixelate",
+    "engine": "cv",
+    "ssim": 0.947,
+    "red": 0.03005642361111111,
+    "black": 3.850911458333333,
+    "score": 5.3
+  },
+  {
+    "mode": "pixelate",
+    "engine": "ort",
+    "ssim": 0.949,
+    "red": 0.017686631944444444,
+    "black": 3.794704861111111,
+    "score": 5.1
+  },
+  {
+    "mode": "gaussian",
+    "engine": "cv",
+    "ssim": 0.963,
+    "red": 0.020833333333333336,
+    "black": 3.737160011574074,
+    "score": 3.7
+  },
+  {
+    "mode": "gaussian",
+    "engine": "ort",
+    "ssim": 0.965,
+    "red": 0.020833333333333336,
+    "black": 3.746021412037037,
+    "score": 3.5
+  },
+  {
+    "mode": "landmark",
+    "engine": "cv",
+    "ssim": 0.978,
+    "red": 0.25462962962962965,
+    "black": 3.852719907407407,
+    "score": 2.2
+  }
+]

@@ -1,0 +1,21 @@
+[
+  {
+    "engine": "cv",
+    "mode": "gaussian",
+    "max_side": 1920,
+    "algo": "gaussian",
+    "n": 5,
+    "times_ms": [
+      79.25,
+      65.19,
+      66.68,
+      61.51,
+      61.17
+    ],
+    "avg_ms": 66.76,
+    "min_ms": 61.17,
+    "p50_ms": 65.19,
+    "face_count": 3,
+    "output_bytes": 318261
+  }
+]

@@ -53,7 +53,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 import cv2
 import numpy as np
@@ -96,7 +96,6 @@ ADMIN_TOKEN = os.environ.get("FACE_BLUR_ADMIN_TOKEN", API_TOKEN)
 DOWNLOAD_TIMEOUT = int(os.environ.get("FACE_BLUR_DL_TIMEOUT", "30"))
 MAX_IMAGE_BYTES = int(os.environ.get("FACE_BLUR_MAX_BYTES", str(20 * 1024 * 1024)))  # 20 MB
 IMAGE_TTL_HOURS = int(os.environ.get("FACE_BLUR_IMAGE_TTL_HOURS", "72"))
-DB_CACHE_TTL_HOURS = int(os.environ.get("FACE_BLUR_DB_CACHE_TTL_HOURS", str(IMAGE_TTL_HOURS)))
 CLEANUP_INTERVAL_SECONDS = int(os.environ.get("FACE_BLUR_CLEANUP_INTERVAL_SECONDS", "3600"))
 MAX_RETRIES = int(os.environ.get("FACE_BLUR_MAX_RETRIES", "2"))
 RETRY_BACKOFF_SECONDS = float(os.environ.get("FACE_BLUR_RETRY_BACKOFF_SECONDS", "0.6"))
@@ -167,8 +166,6 @@ def _init_db() -> None:
             conn.execute("ALTER TABLE requests ADD COLUMN retried INTEGER NOT NULL DEFAULT 0")
         if "request_json" not in existing_cols:
             conn.execute("ALTER TABLE requests ADD COLUMN request_json TEXT")
-        if "parent_task_id" not in existing_cols:
-            conn.execute("ALTER TABLE requests ADD COLUMN parent_task_id TEXT")
         if "task_id" not in existing_cols:
             conn.execute("ALTER TABLE requests ADD COLUMN task_id TEXT")
         if "response_json" not in existing_cols:
@@ -211,27 +208,6 @@ def _init_db() -> None:
                 "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
                 (key, value, _utc_now()),
             )
-        # DB 持久缓存: 原始URL -> 打码后URL 映射
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS blur_cache (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                cache_key   TEXT UNIQUE NOT NULL,
-                image_url   TEXT NOT NULL,
-                output_url  TEXT NOT NULL,
-                output_file TEXT NOT NULL,
-                mode        TEXT NOT NULL,
-                created_at  TEXT NOT NULL,
-                expires_at  TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_blur_cache_key ON blur_cache(cache_key)"
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_blur_cache_expires ON blur_cache(expires_at)"
-        )
 
 
 def _get_setting(key: str, default: str) -> str:
@@ -262,7 +238,7 @@ def _get_float_setting(key: str, default: float, min_value: float = 0.0, max_val
 
 def _set_settings(values: dict) -> dict:
     allowed = {
-        "max_concurrent_tasks": (1, 128, int),
+        "max_concurrent_tasks": (1, 32, int),
         "max_retries": (0, 10, int),
         "retry_backoff_seconds": (0.0, 10.0, float),
         "image_ttl_hours": (1, 24 * 365, int),
@@ -287,7 +263,7 @@ def _set_settings(values: dict) -> dict:
 @contextmanager
 def _task_slot():
     global _INFLIGHT_TASKS
-    limit = _get_int_setting("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_TASKS, 1, 128)
+    limit = _get_int_setting("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_TASKS, 1, 32)
     with _INFLIGHT_LOCK:
         if _INFLIGHT_TASKS >= limit:
             raise HTTPException(429, f"too many concurrent tasks ({_INFLIGHT_TASKS}/{limit})")
@@ -307,9 +283,9 @@ def _insert_request(row: dict) -> None:
                 INSERT INTO requests (
                     task_id, created_at, status, mode, blocked, face_count, elapsed_ms,
                     process_ms, input_bytes, output_bytes, image_url, output_url,
-                    output_file, parent_task_id, error, client_ip, user_agent, attempts, retried,
+                    output_file, error, client_ip, user_agent, attempts, retried,
                     request_json, response_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     row.get("task_id"),
@@ -325,7 +301,6 @@ def _insert_request(row: dict) -> None:
                     row.get("image_url"),
                     row.get("output_url"),
                     row.get("output_file"),
-                    row.get("parent_task_id"),
                     row.get("error"),
                     row.get("client_ip"),
                     row.get("user_agent"),
@@ -424,40 +399,22 @@ def _task_row(row: sqlite3.Row | dict) -> dict:
     return item
 
 
-def _static_files(offset: int = 0, limit: int | None = None,
-                  include_task_id: bool = False) -> tuple[list[dict], int]:
+def _static_files(offset: int = 0, limit: int | None = None) -> tuple[list[dict], int]:
     paths = sorted(STATIC_DIR.glob("*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
     total = len(paths)
     if limit is not None:
         paths = paths[offset:offset + limit]
     else:
         paths = paths[offset:]
-    # Batch lookup task_id for image click navigation
-    task_map = {}
-    if include_task_id and paths:
-        try:
-            file_names = [p.name for p in paths]
-            with _db() as conn:
-                placeholders = ",".join("?" for _ in file_names)
-                rows = conn.execute(
-                    f"SELECT output_file, task_id FROM requests WHERE output_file IN ({placeholders})",
-                    file_names,
-                ).fetchall()
-                task_map = {r["output_file"]: r["task_id"] for r in rows}
-        except Exception as e:
-            log.warning("task_id lookup failed: %s", e)
     files = []
     for path in paths:
         st = path.stat()
-        item = {
+        files.append({
             "name": path.name,
             "size": st.st_size,
             "mtime": datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat(timespec="seconds"),
             "url": f"/static/{path.name}",
-        }
-        if include_task_id:
-            item["task_id"] = task_map.get(path.name, "")
-        files.append(item)
+        })
     return files, total
 
 
@@ -501,10 +458,6 @@ def _cleanup_loop() -> None:
                 log.info("cleanup deleted=%s freed=%s", result["deleted_files"], result["freed_bytes"])
         except Exception as e:  # noqa: BLE001
             log.warning("cleanup failed: %s", e)
-        try:
-            _db_cache_cleanup_expired()
-        except Exception as e:
-            log.warning("db_cache_cleanup failed: %s", e)
 
 
 @app.on_event("startup")
@@ -521,14 +474,13 @@ class FaceBlurRequest(BaseModel):
         pattern=r"^(pixelate|gaussian|solid|landmark|landmark_whole_face)$",
     )
     # 默认值已对齐 face_blur.py / v14r3 推荐参数 (2026-08-05)
-    score_threshold: float = Field(0.52, ge=0.1, le=0.99)
+    score_threshold: float = Field(0.6, ge=0.1, le=0.99)
     expand_ratio: float = Field(0.30, ge=0.0, le=1.0)
     dot_radius: int = Field(3, ge=1, le=20)
     spacing: int = Field(14, ge=4, le=60)
     # landmark_whole_face 模式专用参数
     face_grid_step: int = Field(14, ge=4, le=60)
     grid_n: int = Field(5, ge=3, le=11, description="关键点附近矩阵大小 (建议 3-7)")
-    parent_task_id: Optional[str] = Field(None, max_length=200, description="上游任务批次标记")
     callback_url: Optional[HttpUrl] = None
 
 
@@ -562,34 +514,26 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 # 工具
 # ---------------------------------------------------------------------------
 
-# C: requests.Session 连接池复用 (替代 urllib)
-_DL_SESSION = None
+import urllib.request
+import urllib.error
+import ssl
 
-def _dl_session():
-    global _DL_SESSION
-    if _DL_SESSION is None:
-        import requests as _rq
-        _DL_SESSION = _rq.Session()
-        _adapter = _rq.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=50)
-        _DL_SESSION.mount("https://", _adapter)
-        _DL_SESSION.mount("http://", _adapter)
-    return _DL_SESSION
 
 def _download(url: str, max_bytes: int = MAX_IMAGE_BYTES,
               timeout: int = DOWNLOAD_TIMEOUT) -> bytes:
-    """下载 URL, 限制最大字节数 (复用连接池)"""
-    sess = _dl_session()
-    resp = sess.get(url, timeout=timeout, stream=True,
-                    headers={"User-Agent": "faceblur-api/1.0"})
-    resp.raise_for_status()
-    data = b""
-    for chunk in resp.iter_content(chunk_size=65536):
-        if not chunk:
-            break
-        data += chunk
-        if len(data) > max_bytes:
-            resp.close()
-            raise HTTPException(413, f"image too large (> {max_bytes} bytes)")
+    """下载 URL, 限制最大字节数"""
+    ctx = ssl.create_default_context()
+    req = urllib.request.Request(url, headers={"User-Agent": "faceblur-api/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+        # 限流读取
+        data = b""
+        while True:
+            chunk = r.read(64 * 1024)
+            if not chunk:
+                break
+            data += chunk
+            if len(data) > max_bytes:
+                raise HTTPException(413, f"image too large (> {max_bytes} bytes)")
     return data
 
 
@@ -615,106 +559,6 @@ def _run_with_retries(label: str, func, max_retries: int = MAX_RETRIES):
             time.sleep(sleep_s)
     assert last_error is not None
     return None, attempts, last_error
-
-
-
-# E: URL 级 LRU 缓存 (TTL 5分钟, 最多 200 条)
-import hashlib
-from collections import OrderedDict
-
-_RESPONSE_CACHE: OrderedDict = OrderedDict()
-_CACHE_MAX_SIZE = 200
-_CACHE_TTL_SECONDS = 300
-
-def _cache_key(image_url: str, req_json: str) -> str:
-    return hashlib.md5((image_url + req_json).encode()).hexdigest()
-
-def _cache_get(key: str):
-    if key not in _RESPONSE_CACHE:
-        return None
-    entry = _RESPONSE_CACHE[key]
-    if time.time() - entry["ts"] > _CACHE_TTL_SECONDS:
-        del _RESPONSE_CACHE[key]
-        return None
-    _RESPONSE_CACHE.move_to_end(key)
-    return entry["resp"]
-
-def _cache_set(key: str, resp: dict):
-    if key in _RESPONSE_CACHE:
-        _RESPONSE_CACHE.move_to_end(key)
-        _RESPONSE_CACHE[key] = {"ts": time.time(), "resp": resp}
-    else:
-        if len(_RESPONSE_CACHE) >= _CACHE_MAX_SIZE:
-            _RESPONSE_CACHE.popitem(last=False)
-        _RESPONSE_CACHE[key] = {"ts": time.time(), "resp": resp}
-
-# DB 持久缓存 (L2): 原始URL->打码后URL 映射, 进程重启不丢
-def _db_cache_get(cache_key: str):
-    """查询 L2 缓存。返回 output_url 或 None。过期/文件丢失自动清理。"""
-    try:
-        with _db() as conn:
-            row = conn.execute(
-                "SELECT output_url, output_file, expires_at FROM blur_cache WHERE cache_key=?",
-                (cache_key,),
-            ).fetchone()
-        if row is None:
-            return None
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        if row["expires_at"] < now:
-            _db_cache_del(cache_key)
-            return None
-        out_path = STATIC_DIR / row["output_file"]
-        if not out_path.exists():
-            _db_cache_del(cache_key)
-            return None
-        return row["output_url"]
-    except Exception as e:
-        log.warning("db_cache_get failed: %s", e)
-        return None
-
-
-def _db_cache_set(cache_key: str, image_url: str, output_url: str,
-                  output_file: str, mode: str):
-    """写入 L2 缓存"""
-    try:
-        now = _utc_now()
-        ttl_hours = _get_int_setting("image_ttl_hours", IMAGE_TTL_HOURS, 1, 24 * 365)
-        expires = (datetime.now(timezone.utc) + timedelta(hours=ttl_hours)).isoformat(timespec="seconds")
-        with _db() as conn:
-            conn.execute(
-                """INSERT OR REPLACE INTO blur_cache
-                   (cache_key, image_url, output_url, output_file, mode, created_at, expires_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (cache_key, image_url, output_url, output_file, mode, now, expires),
-            )
-    except Exception as e:
-        log.warning("db_cache_set failed: %s", e)
-
-
-def _db_cache_del(cache_key: str):
-    """删除 L2 缓存记录"""
-    try:
-        with _db() as conn:
-            conn.execute("DELETE FROM blur_cache WHERE cache_key=?", (cache_key,))
-    except Exception as e:
-        log.warning("db_cache_del failed: %s", e)
-
-
-def _db_cache_cleanup_expired():
-    """清理所有过期的 L2 缓存记录"""
-    try:
-        now = _utc_now()
-        with _db() as conn:
-            result = conn.execute(
-                "DELETE FROM blur_cache WHERE expires_at < ?", (now,)
-            )
-        deleted = result.rowcount
-        if deleted:
-            log.info("db_cache_cleanup: deleted %d expired records", deleted)
-        return deleted
-    except Exception as e:
-        log.warning("db_cache_cleanup failed: %s", e)
-        return 0
 
 
 def _public_url_for(path: Path, request_base: str) -> str:
@@ -745,37 +589,9 @@ def healthz():
 @app.post("/api/face_blur")
 def face_blur(req: FaceBlurRequest, request: Request):
     task_id = uuid.uuid4().hex
-    # E: 计算缓存 key (L1 + L2 共用)
-    _cache_req_json = json.dumps(req.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
-    _ck = _cache_key(str(req.image_url), _cache_req_json)
-
-    # L1: 内存缓存
-    _cached = _cache_get(_ck)
-    if _cached is not None:
-        log.info("[cache] L1 hit")
-        return {**_cached, "task_id": task_id, "parent_task_id": req.parent_task_id or ""}
-
-    # L2: DB 持久缓存
-    _db_url = _db_cache_get(_ck)
-    if _db_url is not None:
-        # 构造与正常打码一致的响应
-        log.info("[cache] L2 hit")
-        return {
-            "task_id": task_id,
-            "ok": True,
-            "blocked": True,
-            "face_count": -1,
-            "elapsed_ms": 0,
-            "mode": req.mode,
-            "output_url": _db_url,
-            "original_url": str(req.image_url),
-            "parent_task_id": req.parent_task_id or "",
-            "cached": True,
-        }
-
     try:
         with _task_slot():
-            return _face_blur_impl(task_id, req, request, cache_key=_ck)
+            return _face_blur_impl(task_id, req, request)
     except HTTPException as exc:
         response = {"task_id": task_id, "status": "rejected", "error": str(exc.detail)}
         _insert_request({
@@ -784,7 +600,6 @@ def face_blur(req: FaceBlurRequest, request: Request):
             "mode": req.mode,
             "image_url": str(req.image_url),
             "error": str(exc.detail),
-            "parent_task_id": req.parent_task_id or "",
             "client_ip": request.client.host if request.client else None,
             "user_agent": request.headers.get("user-agent", "")[:300],
             "request_json": _request_record(req, request),
@@ -793,7 +608,7 @@ def face_blur(req: FaceBlurRequest, request: Request):
         return JSONResponse(response, status_code=exc.status_code)
 
 
-def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cache_key: str = ""):
+def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request):
     t0 = time.perf_counter()
     image_url = str(req.image_url)
     request_json = _request_record(req, request)
@@ -817,7 +632,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
         _insert_request({
             "task_id": task_id, "status": "download_error", "mode": req.mode,
             "image_url": image_url, "error": str(e.detail),
-            "parent_task_id": req.parent_task_id or "",
             "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
             "client_ip": client_ip, "user_agent": user_agent,
             "attempts": attempts, "retried": attempts > 1,
@@ -833,7 +647,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             "status": "download_error",
             "mode": req.mode,
             "image_url": image_url,
-            "parent_task_id": req.parent_task_id or "",
             "error": str(e),
             "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
             "client_ip": client_ip,
@@ -880,7 +693,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             "mode": req.mode,
             "image_url": image_url,
             "input_bytes": len(img_bytes),
-            "parent_task_id": req.parent_task_id or "",
             "error": str(e),
             "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
             "client_ip": client_ip,
@@ -900,7 +712,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             "mode": req.mode,
             "image_url": image_url,
             "input_bytes": len(img_bytes),
-            "parent_task_id": req.parent_task_id or "",
             "error": str(e),
             "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
             "client_ip": client_ip,
@@ -941,7 +752,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             "input_bytes": len(img_bytes),
             "image_url": image_url,
             "output_url": image_url,
-            "parent_task_id": req.parent_task_id or "",
             "client_ip": client_ip,
             "user_agent": user_agent,
             "attempts": attempts,
@@ -949,7 +759,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             "request_json": request_json,
             "response_json": json.dumps(response, ensure_ascii=False),
         })
-        _cache_set(cache_key, response)
         return response
 
     # 4. 写入静态目录
@@ -973,7 +782,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
         "mode": req.mode,
         "original_url": image_url,
         "output_url": output_url,
-        "parent_task_id": req.parent_task_id or "",
         "size": len(result["image_bytes"]),
     }
     _insert_request({
@@ -989,7 +797,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
         "image_url": image_url,
         "output_url": output_url,
         "output_file": out_name,
-        "parent_task_id": req.parent_task_id or "",
         "client_ip": client_ip,
         "user_agent": user_agent,
         "attempts": attempts,
@@ -997,11 +804,6 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
         "request_json": request_json,
         "response_json": json.dumps(response, ensure_ascii=False),
     })
-
-    # L2: 写入 DB 持久缓存
-    _db_cache_set(cache_key, str(req.image_url), response["output_url"],
-                  out_name, req.mode)
-    _cache_set(cache_key, response)
     return response
 
 
@@ -1066,7 +868,7 @@ def admin_summary(
             "retry_backoff_seconds": _get_float_setting("retry_backoff_seconds", RETRY_BACKOFF_SECONDS, 0.0, 10.0),
             "image_ttl_hours_effective": _get_int_setting("image_ttl_hours", IMAGE_TTL_HOURS, 1, 24 * 365),
             "inflight_tasks": inflight,
-            "max_concurrent_tasks": _get_int_setting("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_TASKS, 1, 128),
+            "max_concurrent_tasks": _get_int_setting("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_TASKS, 1, 32),
         },
         "requests": {
             "total": total,
@@ -1095,7 +897,6 @@ def admin_requests(
     offset: int = Query(0, ge=0),
     limit: int = Query(10, ge=10, le=200),
     status: str | None = Query(default=None),
-    parent_task_id: str | None = Query(default=None),
     authorization: str | None = Header(default=None),
     x_admin_token: str | None = Header(default=None),
     token: str | None = Query(default=None),
@@ -1106,10 +907,6 @@ def admin_requests(
     if status:
         where = " WHERE status = ?"
         params.append(status)
-    if parent_task_id:
-        prefix = " AND " if where else " WHERE "
-        where += prefix + "parent_task_id = ?"
-        params.append(parent_task_id)
     with _db() as conn:
         total = conn.execute(f"SELECT COUNT(*) FROM requests{where}", params).fetchone()[0]
         rows = [dict(r) for r in conn.execute(
@@ -1153,7 +950,7 @@ def admin_files(
     token: str | None = Query(default=None),
 ):
     _require_admin(request, authorization, x_admin_token, token)
-    items, total = _static_files(offset=offset, limit=limit, include_task_id=True)
+    items, total = _static_files(offset=offset, limit=limit)
     return {"ok": True, "items": items, "total": total, "offset": offset, "limit": limit, "has_more": offset + len(items) < total}
 
 
@@ -1172,7 +969,7 @@ def admin_cleanup(
 
 
 class AdminSettingsRequest(BaseModel):
-    max_concurrent_tasks: Optional[int] = Field(default=None, ge=1, le=128)
+    max_concurrent_tasks: Optional[int] = Field(default=None, ge=1, le=32)
     max_retries: Optional[int] = Field(default=None, ge=0, le=10)
     retry_backoff_seconds: Optional[float] = Field(default=None, ge=0.0, le=10.0)
     image_ttl_hours: Optional[int] = Field(default=None, ge=1, le=24 * 365)
@@ -1191,7 +988,7 @@ def admin_get_settings(
     return {
         "ok": True,
         "settings": {
-            "max_concurrent_tasks": _get_int_setting("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_TASKS, 1, 128),
+            "max_concurrent_tasks": _get_int_setting("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_TASKS, 1, 32),
             "max_retries": _get_int_setting("max_retries", MAX_RETRIES, 0, 10),
             "retry_backoff_seconds": _get_float_setting("retry_backoff_seconds", RETRY_BACKOFF_SECONDS, 0.0, 10.0),
             "image_ttl_hours": _get_int_setting("image_ttl_hours", IMAGE_TTL_HOURS, 1, 24 * 365),
@@ -1215,7 +1012,7 @@ def admin_set_settings(
 
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page():
-    return HTMLResponse(content=ADMIN_HTML, headers={"Cache-Control": "no-store, max-age=0"})
+    return ADMIN_HTML
 
 
 ADMIN_HTML = """
@@ -1244,7 +1041,7 @@ ADMIN_HTML = """
       font-family: ui-serif, Georgia, "Times New Roman", "Microsoft YaHei", serif;
     }
     button, input, select { font: inherit; }
-    .shell { max-width: 1920px; margin: 0 auto; padding: 28px 24px 48px; }
+    .shell { max-width: 1680px; margin: 0 auto; padding: 28px 24px 48px; }
     header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-end; margin-bottom: 22px; }
     h1 { margin: 0; font-size: 34px; line-height: 1; letter-spacing: 0; }
     .sub { margin-top: 8px; color: var(--muted); font-size: 14px; }
@@ -1309,7 +1106,7 @@ ADMIN_HTML = """
   <main class="shell">
     <header>
       <div>
-        <a href="/admin" style="text-decoration:none;color:inherit"><h1>FaceBlur Admin</h1></a>
+        <h1>FaceBlur Admin</h1>
         <div class="sub">Live request log, static image storage, cleanup control</div>
       </div>
       <div class="auth">
@@ -1325,7 +1122,7 @@ ADMIN_HTML = """
       <button class="tab" id="task-tab" data-tab="task" onclick="showTab('task')" hidden>任务详情</button>
     </nav>
     <div class="task-search">
-      <input id="task-search" type="search" placeholder="输入任务 ID 或父任务ID 定位" aria-label="任务 ID" />
+      <input id="task-search" type="search" placeholder="输入任务 ID 定位请求" aria-label="任务 ID" />
       <button class="btn secondary" onclick="findTask()">查询任务</button>
     </div>
 
@@ -1366,14 +1163,12 @@ ADMIN_HTML = """
           </div>
         </div>
         <table>
-          <thead><tr><th>时间</th><th>任务 ID</th><th>父任务ID</th><th>状态</th><th>模式</th><th>来源</th><th>耗时</th><th>操作</th></tr></thead>
+          <thead><tr><th>时间</th><th>任务 ID</th><th>状态</th><th>模式</th><th>来源</th><th>耗时</th><th>操作</th></tr></thead>
           <tbody id="requests"></tbody>
         </table>
         <div class="pager">
           <button class="btn secondary" id="request-prev" onclick="changeRequestPage(-1)">上一页</button>
           <span class="pager-info" id="request-page-info">第 1 / 1 页</span>
-          <input type="number" id="request-jump-page" min="1" placeholder="页" style="width:48px;text-align:center" onkeydown="if(event.key==='Enter')jumpRequestPage()">
-          <button class="btn secondary" onclick="jumpRequestPage()">跳转</button>
           <button class="btn secondary" id="request-next" onclick="changeRequestPage(1)">下一页</button>
         </div>
       </div>
@@ -1408,8 +1203,6 @@ ADMIN_HTML = """
         <div class="pager">
           <button class="btn secondary" id="gallery-prev" onclick="changeGalleryPage(-1)">上一页</button>
           <span class="pager-info" id="gallery-page-info">第 1 / 1 页</span>
-          <input type="number" id="gallery-jump-page" min="1" placeholder="页" style="width:48px;text-align:center" onkeydown="if(event.key==='Enter')jumpGalleryPage()">
-          <button class="btn secondary" onclick="jumpGalleryPage()">跳转</button>
           <button class="btn secondary" id="gallery-next" onclick="changeGalleryPage(1)">下一页</button>
         </div>
       </section>
@@ -1497,31 +1290,19 @@ ADMIN_HTML = """
       };
     }
     function jsonView(value){ return escapeHtml(JSON.stringify(value, null, 2)); }
-    function showImgSize(img){
-      const el = document.getElementById(img.id + "-size");
-      const dims = img.naturalWidth + " × " + img.naturalHeight + " px";
-      const bytes = parseInt(img.dataset.size || 0);
-      el.textContent = dims + (bytes ? " · " + fmtBytes(bytes) : "");
-    }
-    function imageView(id, label, url, sizeBytes){
-      const meta = id + "-size";
-      const sizeText = sizeBytes ? ` \xb7 ${fmtBytes(sizeBytes)}` : "";
-      return `<div class="image-preview"><h3><span>${label}</span><span class="img-meta" id="${meta}">${sizeText}</span></h3>${url
-        ? `<img id="${id}" src="${escapeHtml(url)}" alt="${label}" loading="lazy" onload="showImgSize(this)" data-size="${sizeBytes || 0}" />`
+    function imageView(id, label, url){
+      return `<div class="image-preview"><h3>${label}</h3>${url
+        ? `<img id="${id}" src="${escapeHtml(url)}" alt="${label}" loading="lazy" />`
         : `<div class="image-empty" id="${id}">无可预览图片</div>`}</div>`;
     }
     async function loadRequests(){
-      let url = '/api/admin/requests?offset=' + ((requestPage - 1) * requestPageSize) + '&limit=' + requestPageSize;
-      const q = document.getElementById('task-search').value.trim();
-      if(q && q.length !== 32) url += '&parent_task_id=' + encodeURIComponent(q);
-      const d = await api(url);
+      const d = await api(`/api/admin/requests?offset=${(requestPage - 1) * requestPageSize}&limit=${requestPageSize}`);
       requestPageCount = Math.max(1, Math.ceil(d.total / requestPageSize));
       if(requestPage > requestPageCount){ requestPage = requestPageCount; return loadRequests(); }
       document.getElementById('requests').innerHTML = d.items.map(x => `
         <tr>
           <td>${fmtBeijingTime(x.created_at)}</td>
           <td><div class="task-id" title="${escapeHtml(x.task_id)}">${escapeHtml(x.task_id || '-')}</div></td>
-          <td>${escapeHtml(x.parent_task_id || "-")}</td>
           <td><span class="pill ${x.status === 'ok' ? '' : 'err'}">${x.status}</span></td>
           <td>${escapeHtml(x.mode || '-')}</td>
           <td>${escapeHtml(x.client_ip || '-')}</td>
@@ -1538,14 +1319,6 @@ ADMIN_HTML = """
       requestPage = nextPage;
       await loadRequests();
     }
-    async function jumpRequestPage(){
-      const p = parseInt(document.getElementById("request-jump-page").value);
-      if(p >= 1 && p <= requestPageCount){ requestPage = p; await loadRequests(); }
-    }
-    async function jumpGalleryPage(){
-      const p = parseInt(document.getElementById("gallery-jump-page").value);
-      if(p >= 1 && p <= galleryPageCount){ galleryPage = p; await loadGalleryPage(); window.scrollTo({top: 0, behavior: "smooth"}); }
-    }
     async function changeRequestPageSize(){
       requestPageSize = Number(document.getElementById('request-page-size').value);
       requestPage = 1;
@@ -1553,13 +1326,8 @@ ADMIN_HTML = """
     }
     async function loadFiles(){
       const d = await api('/api/admin/files?offset=0&limit=10');
-      document.getElementById('files').innerHTML = d.items.map(x => {
-        const tid = x.task_id || '';
-        const onclick = tid ? `onclick="showTaskDetail('${escapeHtml(tid)}')"` : '';
-        const style = tid ? 'style="cursor:pointer"' : '';
-        const title = tid ? 'title="点击查看任务详情"' : '';
-        return `<div class="file" ${onclick} ${style} ${title}><img src="${x.url}" loading="lazy" /><div>${x.name}<br>${fmtBytes(x.size)}</div></div>`;
-      }).join('') || '<div class="status">暂无图片</div>';
+      document.getElementById('files').innerHTML = d.items.map(x => `
+        <div class="file"><img src="${x.url}" loading="lazy" /><div>${x.name}<br>${fmtBytes(x.size)}</div></div>`).join('') || '<div class="status">暂无图片</div>';
     }
     async function showTaskDetail(taskId){
       if(!taskId) return;
@@ -1575,7 +1343,6 @@ ADMIN_HTML = """
         document.getElementById('task-detail').innerHTML = `
           <div class="task-heading">
             <div><h2>任务详情</h2><code>${escapeHtml(x.task_id)}</code></div>
-            <button class="btn secondary" onclick="showTab('overview');window.scrollTo({top:0,behavior:'smooth'})">返回首页</button>
             <button class="btn secondary" onclick="copyTaskId()">复制任务 ID</button>
           </div>
           <div class="task-facts">
@@ -1587,8 +1354,8 @@ ADMIN_HTML = """
           </div>
           ${x.error ? `<div class="status" style="color:var(--warn)">失败原因：${escapeHtml(x.error)}</div>` : ''}
           <div class="task-images">
-            ${imageView('task-input-image', '输入图片', inputUrl, x.input_bytes)}
-            ${imageView('task-output-image', sameImage ? '结果图片（未检测到人脸，返回原图）' : '生成结果', outputUrl, x.output_bytes)}
+            ${imageView('task-input-image', '输入图片', inputUrl)}
+            ${imageView('task-output-image', sameImage ? '结果图片（未检测到人脸，返回原图）' : '生成结果', outputUrl)}
           </div>
           <div class="task-json">
             <div class="json-block"><h3>完整请求信息</h3><pre id="task-request-json">${jsonView(x.request || record.request)}</pre></div>
@@ -1600,10 +1367,8 @@ ADMIN_HTML = """
       } catch(e) { setStatus(`任务查询失败: ${e.message}`); }
     }
     function findTask(){
-      const q = document.getElementById('task-search').value.trim();
-      if(!q) return;
-      if(q.length === 32) showTaskDetail(q);
-      else { requestPage = 1; loadRequests(); }
+      const taskId = document.getElementById('task-search').value.trim();
+      if(taskId) showTaskDetail(taskId);
     }
     async function copyTaskId(){
       const taskId = document.getElementById('task-search').value.trim();
@@ -1624,13 +1389,8 @@ ADMIN_HTML = """
       const d = await api(`/api/admin/files?offset=${(galleryPage - 1) * galleryPageSize}&limit=${galleryPageSize}`);
       galleryPageCount = Math.max(1, Math.ceil(d.total / galleryPageSize));
       if(galleryPage > galleryPageCount){ galleryPage = galleryPageCount; return loadGalleryPage(); }
-      document.getElementById('gallery-files').innerHTML = d.items.map(x => {
-        const tid = x.task_id || '';
-        const onclick = tid ? `onclick="showTaskDetail('${escapeHtml(tid)}')"` : '';
-        const style = tid ? 'style="cursor:pointer"' : '';
-        const title = tid ? 'title="点击查看任务详情"' : '';
-        return `<div class="file" ${onclick} ${style} ${title}><img src="${x.url}" loading="lazy" /><div>${x.name}<br>${fmtBytes(x.size)}</div></div>`;
-      }).join('') || '<div class="status">暂无图片</div>';
+      document.getElementById('gallery-files').innerHTML = d.items.map(x => `
+        <div class="file"><img src="${x.url}" loading="lazy" /><div>${x.name}<br>${fmtBytes(x.size)}</div></div>`).join('') || '<div class="status">暂无图片</div>';
       document.getElementById('gallery-page-info').textContent = `第 ${galleryPage} / ${galleryPageCount} 页，共 ${d.total} 张`;
       document.getElementById('gallery-prev').disabled = galleryPage <= 1;
       document.getElementById('gallery-next').disabled = galleryPage >= galleryPageCount;
