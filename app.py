@@ -1398,6 +1398,16 @@ ADMIN_HTML = """
               <option value="100">100</option>
               <option value="200">200</option>
             </select>
+            <label for="status-filter">状态</label>
+            <select id="status-filter" onchange="loadRequests()">
+              <option value="">全部</option>
+              <option value="ok">ok</option>
+              <option value="rejected">rejected</option>
+              <option value="download_error">download_error</option>
+              <option value="bad_request">bad_request</option>
+              <option value="process_error">process_error</option>
+              <option value="validation_error">validation_error</option>
+            </select>
             <button class="btn secondary" onclick="loadRequests()">刷新</button>
           </div>
         </div>
@@ -1550,6 +1560,8 @@ ADMIN_HTML = """
       let url = '/api/admin/requests?offset=' + ((requestPage - 1) * requestPageSize) + '&limit=' + requestPageSize;
       const q = document.getElementById('task-search').value.trim();
       if(q && q.length !== 32) url += '&parent_task_id=' + encodeURIComponent(q);
+      const st = document.getElementById('status-filter').value;
+      if(st) url += '&status=' + encodeURIComponent(st);
       const d = await api(url);
       requestPageCount = Math.max(1, Math.ceil(d.total / requestPageSize));
       if(requestPage > requestPageCount){ requestPage = requestPageCount; return loadRequests(); }
