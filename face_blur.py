@@ -47,13 +47,18 @@ MODEL_DIR = Path(os.environ.get("FACE_BLUR_MODEL_DIR",
 MODEL_PATH = MODEL_DIR / "face_detection_yunet_2023mar.onnx"
 
 
+_MODEL_LOCK = threading.Lock()
+
 def _ensure_model(model_url: str = YUNET_URL, model_path: Path = MODEL_PATH) -> Path:
     """确保模型文件存在, 缺失则下载."""
     if model_path.exists() and model_path.stat().st_size > 1000:
         return model_path
-    model_path.parent.mkdir(parents=True, exist_ok=True)
-    print(f"[face_blur] downloading model -> {model_path}")
-    urllib.request.urlretrieve(model_url, model_path)
+    with _MODEL_LOCK:
+        if model_path.exists() and model_path.stat().st_size > 1000:
+            return model_path
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        print(f"[face_blur] downloading model -> {model_path}")
+        urllib.request.urlretrieve(model_url, model_path)
     return model_path
 
 
@@ -520,7 +525,10 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
             sub = img[y1:y2, x1:x2]
             landmarks = None
             try:
+                prev_ls = detector._last_size
                 sub_faces = detector.detect_with_landmarks(sub)
+                detector._last_size = prev_ls
+                detector._detector.setInputSize(prev_ls)
                 if sub_faces:
                     f0 = sub_faces[0]
                     lm = f0["landmarks"]
@@ -548,6 +556,7 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
                     region_box=(bx, by, bw, bh),
                 )
             img[by:by + bh, bx:bx + bw] = region
+            face.landmarks = landmarks or {}
     else:
         faces = detector.detect_multiscale(img)
         blur_fn = BLUR_MODES[mode]
