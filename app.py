@@ -588,7 +588,10 @@ def _assert_public_url(url: str):
     except ValueError:
         info = _socket_mod.getaddrinfo(host, None, type=_socket_mod.SOCK_STREAM)
         ip = ipaddress.ip_address(info[0][4][0])
-    if any(ip in net for net in _BLOCKED_NETS):
+    check_ips = [ip]
+    if ip.version == 6 and ip.ipv4_mapped:
+        check_ips.append(ip.ipv4_mapped)
+    if any(any(cip in net for net in _BLOCKED_NETS) for cip in check_ips):
         raise HTTPException(400, "blocked private/reserved address")
 
 # C: requests.Session 连接池复用 (thread-local, 线程安全)
