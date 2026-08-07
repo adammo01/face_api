@@ -138,6 +138,15 @@ def _init_db() -> None:
     with _db() as conn:
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS inflight_counter (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                n INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        conn.execute("INSERT OR IGNORE INTO inflight_counter (id, n) VALUES (1, 0)")
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id TEXT UNIQUE,
@@ -287,6 +296,34 @@ def _set_settings(values: dict) -> dict:
     return saved
 
 
+def _inflight_incr() -> None:
+    """跨 worker 共享并发计数 (SQLite 单行, WAL 下开销极小)."""
+    for _ in range(3):
+        try:
+            with _db() as conn:
+                conn.execute("UPDATE inflight_counter SET n = n + 1 WHERE id = 1")
+            return
+        except Exception:
+            time.sleep(0.02)
+
+def _inflight_decr() -> None:
+    for _ in range(3):
+        try:
+            with _db() as conn:
+                conn.execute("UPDATE inflight_counter SET n = MAX(0, n - 1) WHERE id = 1")
+            return
+        except Exception:
+            time.sleep(0.02)
+
+def _inflight_read() -> int:
+    try:
+        with _db() as conn:
+            row = conn.execute("SELECT n FROM inflight_counter WHERE id = 1").fetchone()
+            return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
 @contextmanager
 def _task_slot():
     global _INFLIGHT_TASKS
@@ -295,9 +332,11 @@ def _task_slot():
         if _INFLIGHT_TASKS >= limit:
             raise HTTPException(429, f"too many concurrent tasks ({_INFLIGHT_TASKS}/{limit})")
         _INFLIGHT_TASKS += 1
+    _inflight_incr()
     try:
         yield limit
     finally:
+        _inflight_decr()
         with _INFLIGHT_LOCK:
             _INFLIGHT_TASKS = max(0, _INFLIGHT_TASKS - 1)
 
@@ -1087,8 +1126,7 @@ def admin_summary(
             "SELECT * FROM cleanup_runs ORDER BY id DESC LIMIT 1"
         ).fetchone()
     files, file_total = _static_files()
-    with _INFLIGHT_LOCK:
-        inflight = _INFLIGHT_TASKS
+    inflight = _inflight_read()
     return {
         "ok": True,
         "service": {
@@ -1222,8 +1260,7 @@ def admin_get_settings(
     token: str | None = Query(default=None),
 ):
     _require_admin(request, authorization, x_admin_token, token)
-    with _INFLIGHT_LOCK:
-        inflight = _INFLIGHT_TASKS
+    inflight = _inflight_read()
     return {
         "ok": True,
         "settings": {
@@ -1373,12 +1410,13 @@ ADMIN_HTML = """
       <div class="card"><div class="label">成功率</div><div class="metric" id="m-rate">-</div></div>
       <div class="card"><div class="label">24h 成功率</div><div class="metric" id="m-rate-24h">-</div></div>
       <div class="card"><div class="label">静态图片</div><div class="metric" id="m-files">-</div></div>
+      <div class="card" style="border-color:var(--accent)"><div class="label">实时并发</div><div class="metric" id="m-inflight">-</div></div>
     </section>
 
     <section class="panel" style="margin-bottom:14px">
       <div class="panel-head"><h2>运行设置</h2><button class="btn secondary" onclick="saveSettings()">保存设置</button></div>
       <div class="settings">
-        <div class="field"><label>并行任务上限</label><input id="s-concurrency" type="number" min="1" max="32" /></div>
+        <div class="field"><label>并行任务上限</label><input id="s-concurrency" type="number" min="1" max="128" /></div>
         <div class="field"><label>失败重试次数</label><input id="s-retries" type="number" min="0" max="10" /></div>
         <div class="field"><label>重试退避秒</label><input id="s-backoff" type="number" min="0" max="10" step="0.1" /></div>
         <div class="field"><label>图片保留小时</label><input id="s-ttl" type="number" min="1" max="8760" /></div>
@@ -1524,6 +1562,7 @@ ADMIN_HTML = """
       document.getElementById('m-rate').textContent = `${d.requests.success_rate}%`;
       document.getElementById('m-rate-24h').textContent = `${d.requests.success_rate_24h}%`;
       document.getElementById('m-files').textContent = `${d.storage.file_count}`;
+      document.getElementById('m-inflight').textContent = `${d.service.inflight_tasks}/${d.service.max_concurrent_tasks}`;
       document.getElementById('s-concurrency').value = d.service.max_concurrent_tasks;
       document.getElementById('s-retries').value = d.service.max_retries;
       document.getElementById('s-backoff').value = d.service.retry_backoff_seconds;
@@ -1731,6 +1770,7 @@ ADMIN_HTML = """
       if(match) showTaskDetail(decodeURIComponent(match[1]));
     });
     setInterval(() => { if(tokenEl.value.trim()) loadAll(); }, 30000);
+    setInterval(() => { if(tokenEl.value.trim()) loadSummary(); }, 3000);
   </script>
 </body>
 </html>
