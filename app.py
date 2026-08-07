@@ -1331,7 +1331,7 @@ ADMIN_HTML = """
     .tab { border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--muted); padding: 10px 16px; cursor: pointer; }
     .tab.active { border-bottom-color: var(--accent); color: var(--ink); font-weight: 700; }
     .tab-view[hidden] { display: none; }
-    .grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
     .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; box-shadow: var(--shadow); min-height: 104px; }
     .label { color: var(--muted); font-size: 13px; }
     .metric { margin-top: 8px; font-size: 30px; font-weight: 700; }
@@ -1527,6 +1527,14 @@ ADMIN_HTML = """
     function headers(){ const t = tokenEl.value.trim(); return t ? {'X-Admin-Token': t} : {}; }
     function setStatus(text){ document.getElementById('status').textContent = text; }
     function fmtBytes(n){ if(!n) return '0 B'; const u=['B','KB','MB','GB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return `${n.toFixed(i?1:0)} ${u[i]}`; }
+    function fmtNum(n){
+      n = Number(n) || 0;
+      if(n >= 1e6) return (n/1e6).toFixed(2) + '百万';
+      if(n >= 1e5) return (n/1e5).toFixed(2) + '十万';
+      if(n >= 1e4) return (n/1e4).toFixed(2) + '万';
+      if(n >= 1e3) return (n/1e3).toFixed(2) + '千';
+      return n.toString();
+    }
     function escapeHtml(value){
       return String(value ?? '').replace(/[&<>"']/g, char => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -1557,12 +1565,24 @@ ADMIN_HTML = """
     }
     async function loadSummary(){
       const d = await api('/api/admin/summary');
-      document.getElementById('m-total').textContent = d.requests.total;
-      document.getElementById('m-blocked').textContent = d.requests.blocked;
-      document.getElementById('m-rate').textContent = `${d.requests.success_rate}%`;
-      document.getElementById('m-rate-24h').textContent = `${d.requests.success_rate_24h}%`;
-      document.getElementById('m-files').textContent = `${d.storage.file_count}`;
-      document.getElementById('m-inflight').textContent = `${d.service.inflight_tasks}/${d.service.max_concurrent_tasks}`;
+      const _t = document.getElementById('m-total');
+      _t.textContent = fmtNum(d.requests.total);
+      _t.title = d.requests.total.toLocaleString() + ' 次请求';
+      const _b = document.getElementById('m-blocked');
+      _b.textContent = fmtNum(d.requests.blocked);
+      _b.title = d.requests.blocked.toLocaleString() + ' 张已打码';
+      const _r = document.getElementById('m-rate');
+      _r.textContent = d.requests.success_rate.toFixed(2) + '%';
+      _r.title = d.requests.success_rate + '% (累计)';
+      const _r24 = document.getElementById('m-rate-24h');
+      _r24.textContent = d.requests.success_rate_24h.toFixed(2) + '%';
+      _r24.title = d.requests.success_rate_24h + '% (24h)';
+      const _f = document.getElementById('m-files');
+      _f.textContent = fmtNum(d.storage.file_count);
+      _f.title = d.storage.file_count.toLocaleString() + ' 张静态图片 (' + fmtBytes(d.storage.bytes) + ')';
+      const _i = document.getElementById('m-inflight');
+      _i.textContent = d.service.inflight_tasks + '/' + d.service.max_concurrent_tasks;
+      _i.title = '当前 ' + d.service.inflight_tasks + ' / 上限 ' + d.service.max_concurrent_tasks + ' 并发';
       document.getElementById('s-concurrency').value = d.service.max_concurrent_tasks;
       document.getElementById('s-retries').value = d.service.max_retries;
       document.getElementById('s-backoff').value = d.service.retry_backoff_seconds;
