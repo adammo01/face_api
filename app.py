@@ -51,6 +51,9 @@ import logging
 import json
 import sqlite3
 import threading
+import ipaddress
+import socket as _socket_mod
+import urllib.parse as _urlparse_mod
 from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
@@ -562,6 +565,25 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 # 工具
 # ---------------------------------------------------------------------------
 
+# SSRF 防护: 禁止请求内网/保留地址
+_BLOCKED_NETS = []
+for _n in ("127.0.0.0/8","10.0.0.0/8","172.16.0.0/12","192.168.0.0/16","169.254.0.0/16","0.0.0.0/8","100.64.0.0/10","198.18.0.0/15"):
+    _BLOCKED_NETS.append(ipaddress.IPv4Network(_n))
+for _n in ("::1/128","fc00::/7","fe80::/10"):
+    _BLOCKED_NETS.append(ipaddress.IPv6Network(_n))
+
+def _assert_public_url(url: str):
+    host = _urlparse_mod.urlparse(url).hostname
+    if not host:
+        raise HTTPException(400, "invalid URL: no hostname")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        info = _socket_mod.getaddrinfo(host, None, type=_socket_mod.SOCK_STREAM)
+        ip = ipaddress.ip_address(info[0][4][0])
+    if any(ip in net for net in _BLOCKED_NETS):
+        raise HTTPException(400, "blocked private/reserved address")
+
 # C: requests.Session 连接池复用 (替代 urllib)
 _DL_SESSION = None
 
@@ -578,6 +600,7 @@ def _dl_session():
 def _download(url: str, max_bytes: int = MAX_IMAGE_BYTES,
               timeout: int = DOWNLOAD_TIMEOUT) -> bytes:
     """下载 URL, 限制最大字节数 (复用连接池)"""
+    _assert_public_url(url)
     sess = _dl_session()
     resp = sess.get(url, timeout=timeout, stream=True,
                     headers={"User-Agent": "faceblur-api/1.0"})
