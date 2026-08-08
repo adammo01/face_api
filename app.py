@@ -598,6 +598,7 @@ class FaceBlurRequest(BaseModel):
     # landmark_whole_face 模式专用参数
     face_grid_step: int = Field(14, ge=4, le=60)
     grid_n: int = Field(5, ge=3, le=11, description="关键点附近矩阵大小 (建议 3-7)")
+    min_face_skip: int = Field(50, ge=0, le=500, description="极小人脸跳过阈值")
     parent_task_id: Optional[str] = Field(None, max_length=200, description="上游任务批次标记")
     image_base64: Optional[str] = Field(None, description="Base64 image for lab test")
     callback_url: Optional[HttpUrl] = None
