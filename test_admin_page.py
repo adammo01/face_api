@@ -96,6 +96,15 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('function labOpenPreview(image)', APP_SOURCE)
         self.assertIn('if(event.key === "Escape") labClosePreview();', APP_SOURCE)
 
+    def test_lab_supports_saved_parameter_presets_and_defaults(self):
+        self.assertIn('id="lab-preset"', APP_SOURCE)
+        self.assertIn('onclick="labSavePreset()"', APP_SOURCE)
+        self.assertIn('onclick="labDeletePreset()"', APP_SOURCE)
+        self.assertIn('onclick="labResetDefaults()"', APP_SOURCE)
+        self.assertIn('const LAB_PRESETS_KEY = "faceblur.lab.presets.v1";', APP_SOURCE)
+        self.assertIn('localStorage.setItem(LAB_PRESETS_KEY', APP_SOURCE)
+        self.assertIn('labSetParams(LAB_DEFAULTS);', APP_SOURCE)
+
     def test_task_id_can_be_searched_and_copied(self):
         self.assertIn('id="task-search"', ADMIN_HTML)
         self.assertIn('function findTask()', ADMIN_HTML)

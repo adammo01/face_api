@@ -964,6 +964,10 @@ def lab_page(request: Request):
     .lab-param select { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; background:white; }
     .lab-param .hint { font-size:11px; color:var(--text-dim); }
     .lab-btns { display:flex; gap:8px; margin-top:14px; }
+    .lab-presets { border-top:1px solid var(--line); margin-top:16px; padding-top:14px; }
+    .lab-presets-row { display:flex; gap:8px; align-items:center; }
+    .lab-presets-row select { flex:1; min-width:0; padding:8px; border:1px solid var(--line); border-radius:6px; background:white; }
+    .lab-presets-actions { display:flex; gap:8px; margin-top:8px; }
     @media (max-width:768px) { .lab-grid { grid-template-columns:1fr; } }
     .spinner { display:inline-block; width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .6s linear infinite; vertical-align:middle; margin-right:6px; }
     @keyframes spin { to { transform:rotate(360deg); } }
@@ -1009,6 +1013,19 @@ def lab_page(request: Request):
             <button class="btn primary" onclick="labTest()" id="lab-test-btn">🧪 执行打码</button>
             <button class="btn secondary" onclick="labSyncGlobal()" id="lab-sync-btn" disabled>📋 同步到全局设置</button>
           </div>
+          <div class="lab-presets">
+            <h3>自定义预设</h3>
+            <div class="lab-presets-row">
+              <select id="lab-preset" aria-label="选择参数预设" onchange="labApplyPreset(this.value)">
+                <option value="">选择预设...</option>
+              </select>
+            </div>
+            <div class="lab-presets-actions">
+              <button class="btn secondary" type="button" onclick="labSavePreset()">保存当前参数</button>
+              <button class="btn secondary" type="button" onclick="labDeletePreset()" id="lab-delete-preset" disabled>删除预设</button>
+              <button class="btn secondary" type="button" onclick="labResetDefaults()">恢复默认值</button>
+            </div>
+          </div>
           <p id="lab-status" style="font-size:13px;color:var(--text-dim);margin-top:10px"></p>
         </div>
       </div>
@@ -1020,6 +1037,8 @@ def lab_page(request: Request):
 <script>
 const BASE = window.location.origin;
 const LAB_TOKEN = new URLSearchParams(location.search).get("token") || "";
+const LAB_PRESETS_KEY = "faceblur.lab.presets.v1";
+const LAB_DEFAULTS = {mode:"landmark_whole_face", score_threshold:0.52, expand_ratio:0.30, min_face_skip:50, face_grid_step:14, dot_radius:3, grid_n:5};
 async function apiLab(path, opts={}){
   if(LAB_TOKEN){ opts.headers = opts.headers || {}; opts.headers["X-Admin-Token"] = LAB_TOKEN; }
   const r = await fetch(BASE+path, opts);
@@ -1056,6 +1075,75 @@ function labToggleMode(){
   const m = document.getElementById("lab-mode").value;
   const lm = m.startsWith("landmark");
   ["lab-step","lab-dot","lab-n"].forEach(id=>document.getElementById(id).parentElement.style.display = lm?"":"none");
+}
+function labReadPresets(){
+  try { const value = JSON.parse(localStorage.getItem(LAB_PRESETS_KEY) || "{}"); return value && typeof value === "object" ? value : {}; }
+  catch(e) { return {}; }
+}
+function labWritePresets(presets){
+  try { localStorage.setItem(LAB_PRESETS_KEY, JSON.stringify(presets)); return true; }
+  catch(e) { document.getElementById("lab-status").textContent = "✗ 预设保存失败: 浏览器存储不可用"; return false; }
+}
+function labCurrentParams(){
+  return {mode: document.getElementById("lab-mode").value, score_threshold: Number(document.getElementById("lab-score").value), expand_ratio: Number(document.getElementById("lab-expand").value), min_face_skip: Number(document.getElementById("lab-minface").value), face_grid_step: Number(document.getElementById("lab-step").value), dot_radius: Number(document.getElementById("lab-dot").value), grid_n: Number(document.getElementById("lab-n").value)};
+}
+function labSetParams(params){
+  const values = Object.assign({}, LAB_DEFAULTS, params || {});
+  ["mode","score_threshold","expand_ratio","min_face_skip","face_grid_step","dot_radius","grid_n"].forEach(name => {
+    const id = {mode:"lab-mode", score_threshold:"lab-score", expand_ratio:"lab-expand", min_face_skip:"lab-minface", face_grid_step:"lab-step", dot_radius:"lab-dot", grid_n:"lab-n"}[name];
+    document.getElementById(id).value = values[name];
+  });
+  document.getElementById("lab-score-v").textContent = Number(values.score_threshold).toFixed(2);
+  document.getElementById("lab-expand-v").textContent = Number(values.expand_ratio).toFixed(2);
+  document.getElementById("lab-minface-v").textContent = values.min_face_skip;
+  document.getElementById("lab-step-v").textContent = values.face_grid_step;
+  document.getElementById("lab-dot-v").textContent = values.dot_radius;
+  document.getElementById("lab-n-v").textContent = values.grid_n;
+  labToggleMode();
+  document.getElementById("lab-sync-btn").disabled = true;
+}
+function labEscapeHtml(value){
+  return String(value).replace(/[&<>\"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'\"':"&quot;", "'":"&#39;"}[ch]));
+}
+function labRefreshPresetOptions(selected=""){
+  const select = document.getElementById("lab-preset");
+  const presets = labReadPresets();
+  select.innerHTML = '<option value="">选择预设...</option>' + Object.keys(presets).sort((a,b)=>a.localeCompare(b,"zh-CN")).map(name => '<option value="' + labEscapeHtml(name) + '">' + labEscapeHtml(name) + '</option>').join("");
+  select.value = selected;
+  document.getElementById("lab-delete-preset").disabled = !select.value;
+}
+function labApplyPreset(name){
+  if(!name) { document.getElementById("lab-delete-preset").disabled = true; return; }
+  const preset = labReadPresets()[name];
+  if(preset) { labSetParams(preset); document.getElementById("lab-status").textContent = "✓ 已应用预设: " + name; }
+  document.getElementById("lab-delete-preset").disabled = !preset;
+}
+function labSavePreset(){
+  const name = prompt("请输入预设名称");
+  if(!name || !name.trim()) return;
+  const cleanName = name.trim();
+  const presets = labReadPresets();
+  if(presets[cleanName] && !confirm("预设已存在，是否覆盖？")) return;
+  presets[cleanName] = labCurrentParams();
+  if(!labWritePresets(presets)) return;
+  labRefreshPresetOptions(cleanName);
+  document.getElementById("lab-status").textContent = "✓ 已保存预设: " + cleanName;
+}
+function labDeletePreset(){
+  const select = document.getElementById("lab-preset");
+  const name = select.value;
+  if(!name) return;
+  if(!confirm("确定删除预设「" + name + "」？")) return;
+  const presets = labReadPresets();
+  delete presets[name];
+  if(!labWritePresets(presets)) return;
+  labRefreshPresetOptions();
+  document.getElementById("lab-status").textContent = "✓ 已删除预设: " + name;
+}
+function labResetDefaults(){
+  labSetParams(LAB_DEFAULTS);
+  labRefreshPresetOptions();
+  document.getElementById("lab-status").textContent = "✓ 已恢复默认参数";
 }
 async function labTest(){
   const m = document.getElementById("lab-mode").value;
@@ -1144,7 +1232,8 @@ window.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
-  labToggleMode();
+  labSetParams(LAB_DEFAULTS);
+  labRefreshPresetOptions();
   document.addEventListener("keydown", event => { if(event.key === "Escape") labClosePreview(); });
 });
 </script>
