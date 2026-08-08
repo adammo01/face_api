@@ -692,7 +692,7 @@ def _download(url: str, max_bytes: int = MAX_IMAGE_BYTES,
         raise HTTPException(413, f"image too large ({total_size} > {max_bytes} bytes)")
 
     # 大文件: 4 线程分块并发下载
-    NUM = 4
+    NUM = 8
     chunk_size = (total_size + NUM - 1) // NUM
     results = [None] * NUM
 
