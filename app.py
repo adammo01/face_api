@@ -65,7 +65,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 from typing import Optional
 
 # 加载本地 face_blur 模块
@@ -585,7 +585,7 @@ def startup() -> None:
 
 
 class FaceBlurRequest(BaseModel):
-    image_url: HttpUrl
+    image_url: HttpUrl | None = None
     mode: str = Field(
         "gaussian",
         pattern=r"^(pixelate|gaussian|solid|landmark|landmark_whole_face)$",
@@ -599,6 +599,7 @@ class FaceBlurRequest(BaseModel):
     face_grid_step: int = Field(14, ge=4, le=60)
     grid_n: int = Field(5, ge=3, le=11, description="关键点附近矩阵大小 (建议 3-7)")
     parent_task_id: Optional[str] = Field(None, max_length=200, description="上游任务批次标记")
+    image_base64: Optional[str] = Field(None, description="Base64 image for lab test")
     callback_url: Optional[HttpUrl] = None
 
 
@@ -903,6 +904,231 @@ def _public_url_for(path: Path, request_base: str) -> str:
 # ---------------------------------------------------------------------------
 # 路由
 # ---------------------------------------------------------------------------
+
+@app.get("/lab")
+def lab_page():
+    """打码实验室 - 独立测试页面"""
+    return HTMLResponse(content="""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>打码实验室 · FaceBlur</title>    
+    <!-- ── 打码实验室独立页面 ── -->
+    <style>
+    .lab-wrap { max-width:1100px; margin:0 auto; padding:20px; font-family: system-ui,-apple-system,sans-serif; color:var(--text); }
+    .lab-wrap h2 { margin:0 0 16px; font-size:20px; }
+    .lab-grid { display:grid; grid-template-columns: minmax(0,1.5fr) minmax(320px,1fr); gap:20px; }
+    .lab-upload { border:2px dashed var(--line); border-radius:8px; padding:30px; text-align:center; cursor:pointer; margin-bottom:12px; transition:border-color .2s; }
+    .lab-upload:hover { border-color:var(--accent); }
+    .lab-upload input { display:none; }
+    .lab-url { display:flex; gap:8px; margin-bottom:12px; }
+    .lab-url input { flex:1; padding:10px 12px; border:1px solid var(--line); border-radius:6px; }
+    .lab-preview { display:grid; grid-template-columns: 1fr 1fr; gap:8px; min-height:200px; }
+    .lab-preview img { width:100%; border-radius:8px; background:var(--bg-card); }
+    .lab-preview .label { font-size:12px; color:var(--text-dim); text-align:center; margin-top:4px; }
+    .lab-params { background:var(--bg-card); padding:16px; border-radius:8px; border:1px solid var(--line); }
+    .lab-params h3 { margin:0 0 12px; font-size:16px; }
+    .lab-param { margin-bottom:12px; }
+    .lab-param label { display:flex; justify-content:space-between; font-size:13px; margin-bottom:3px; }
+    .lab-param label span { color:var(--text-dim); }
+    .lab-param input[type=range] { width:100%; }
+    .lab-param select { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; background:white; }
+    .lab-param .hint { font-size:11px; color:var(--text-dim); }
+    .lab-btns { display:flex; gap:8px; margin-top:14px; }
+    @media (max-width:768px) { .lab-grid { grid-template-columns:1fr; } }
+    .spinner { display:inline-block; width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .6s linear infinite; vertical-align:middle; margin-right:6px; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+    </style>
+    <div class="lab-wrap">
+      <h2>🧪 打码实验室</h2>
+      <div class="lab-grid">
+        <div>
+          <div class="lab-upload" onclick="document.getElementById('lab-file').click()" id="lab-drop">
+            📁 点击上传图片 或拖拽到此处<br><small style="color:var(--text-dim)">支持 JPG/PNG/WebP, 最大 20MB</small>
+            <input type="file" id="lab-file" accept="image/*" onchange="labUpload(this)" />
+          </div>
+          <div class="lab-url">
+            <input id="lab-url" type="url" placeholder="或粘贴图片 URL..." onkeydown="if(event.key==='Enter')labTest()" />
+          </div>
+          <div class="lab-preview" id="lab-preview">
+            <div><img id="lab-before" style="display:none" /><div class="label">原图</div></div>
+            <div><img id="lab-after" style="display:none" /><div class="label">打码结果<span id="lab-face-info"></span></div></div>
+          </div>
+        </div>
+        <div class="lab-params">
+          <h3>打码参数</h3>
+          <div class="lab-param">
+            <label>打码模式</label>
+            <select id="lab-mode" onchange="labToggleMode()">
+              <option value="landmark_whole_face">整脸红点遮罩</option>
+              <option value="landmark">关键点遮罩</option>
+              <option value="pixelate">马赛克</option>
+              <option value="gaussian">高斯模糊</option>
+              <option value="solid">纯色遮挡</option>
+            </select>
+          </div>
+          <div class="lab-param"><label>检测阈值 <span id="lab-score-v">0.52</span></label><input type="range" id="lab-score" min="0.3" max="1.0" step="0.01" value="0.52" oninput="document.getElementById('lab-score-v').textContent=this.value" /><div class="hint">越小越灵敏，可能有误检</div></div>
+          <div class="lab-param"><label>扩框比例 <span id="lab-expand-v">0.30</span></label><input type="range" id="lab-expand" min="0" max="1.0" step="0.05" value="0.30" oninput="document.getElementById('lab-expand-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">检测框向外扩展的安全余量</div></div>
+          <div class="lab-param"><label>跳小脸(px) <span id="lab-minface-v">50</span></label><input type="range" id="lab-minface" min="0" max="500" step="5" value="50" oninput="document.getElementById('lab-minface-v').textContent=this.value" /><div class="hint">脸宽小于此值直接跳过, 0=全部打码</div></div>
+          <div class="lab-param"><label>网格间距 <span id="lab-step-v">14</span></label><input type="range" id="lab-step" min="4" max="40" step="1" value="14" oninput="document.getElementById('lab-step-v').textContent=this.value; labStepChanged()" /><div class="hint">越小越密集</div></div>
+          <div class="lab-param"><label>红点半径 <span id="lab-dot-v">3</span></label><input type="range" id="lab-dot" min="1" max="10" step="1" value="3" oninput="document.getElementById('lab-dot-v').textContent=this.value" /><div class="hint">红点大小(px)</div></div>
+          <div class="lab-param"><label>网格密度N <span id="lab-n-v">5</span></label><input type="range" id="lab-n" min="1" max="9" step="1" value="5" oninput="document.getElementById('lab-n-v').textContent=this.value" /><div class="hint">关键点周围叠加层数</div></div>
+          <div class="lab-btns">
+            <button class="btn primary" onclick="labTest()" id="lab-test-btn">🧪 执行打码</button>
+            <button class="btn secondary" onclick="labSyncGlobal()" id="lab-sync-btn" disabled>📋 同步到全局设置</button>
+          </div>
+          <p id="lab-status" style="font-size:13px;color:var(--text-dim);margin-top:10px"></p>
+        </div>
+      </div>
+    </div>
+<script>
+const BASE = window.location.origin;
+async function apiLab(path, opts={}){
+  const r = await fetch(BASE+path, opts);
+  const t = await r.text();
+  try { return JSON.parse(t); } catch(e) { throw new Error(t); }
+}
+function labFileToBase64(file){
+  return new Promise((ok,err)=>{
+    const r = new FileReader();
+    r.onload = () => ok(r.result.split(",")[1]);
+    r.onerror = err;
+    r.readAsDataURL(file);
+  });
+}
+async function labUpload(input){
+  const f = input.files[0];
+  if(!f) return;
+  if(f.size > 20*1024*1024){ alert("图片不能超过 20MB"); return; }
+  document.getElementById("lab-status").textContent = "正在加载图片...";
+  const b64 = await labFileToBase64(f);
+  document.getElementById("lab-base64").value = b64;
+  const u = URL.createObjectURL(f);
+  const bf = document.getElementById("lab-before");
+  bf.src = u; bf.style.display = "";
+  document.getElementById("lab-after").style.display = "none";
+  document.getElementById("lab-status").textContent = "图片已就绪, 点击「执行打码」";
+  document.getElementById("lab-url").value = "";
+  document.getElementById("lab-sync-btn").disabled = true;
+}
+function labToggleMode(){
+  const m = document.getElementById("lab-mode").value;
+  const lm = m.startsWith("landmark");
+  ["lab-step","lab-dot","lab-n"].forEach(id=>document.getElementById(id).parentElement.style.display = lm?"":"none");
+}
+async function labTest(){
+  const m = document.getElementById("lab-mode").value;
+  const b64 = document.getElementById("lab-base64").value;
+  const url = document.getElementById("lab-url").value.trim();
+  if(!b64 && !url){ alert("请先上传图片或输入 URL"); return; }
+  const btn = document.getElementById("lab-test-btn");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>处理中...';
+  document.getElementById("lab-status").textContent = "";
+  try {
+    const body = {mode: m,
+      score_threshold: Number(document.getElementById("lab-score").value),
+      expand_ratio: Number(document.getElementById("lab-expand").value),
+      min_face_skip: Number(document.getElementById("lab-minface").value),
+      face_grid_step: Number(document.getElementById("lab-step").value),
+      dot_radius: Number(document.getElementById("lab-dot").value),
+      grid_n: Number(document.getElementById("lab-n").value),
+    };
+    if(b64) body.image_base64 = b64;
+    if(url) body.image_url = url;
+    const d = await apiLab("/api/lab/test", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const af = document.getElementById("lab-after");
+    af.src = "data:image/jpeg;base64," + d.output_base64;
+    af.style.display = "";
+    document.getElementById("lab-face-info").textContent = " (" + d.face_count + "张脸, " + (d.elapsed_ms||0).toFixed(0) + "ms)";
+    document.getElementById("lab-status").textContent = "✓ 完成";
+    document.getElementById("lab-sync-btn").disabled = false;
+    if(!b64 && url){
+      const bf = document.getElementById("lab-before");
+      bf.src = url; bf.style.display = "";
+    }
+  } catch(e) {
+    document.getElementById("lab-status").textContent = "✗ 错误: " + e.message;
+  }
+  btn.disabled = false;
+  btn.innerHTML = "🧪 执行打码";
+}
+async function labSyncGlobal(){
+  if(!confirm("将当前参数同步到全局设置？\n(对后续新建请求生效)")) return;
+  const body = {
+    score_threshold: Number(document.getElementById("lab-score").value),
+    expand_ratio: Number(document.getElementById("lab-expand").value),
+    min_face_skip: Number(document.getElementById("lab-minface").value),
+    face_grid_step: Number(document.getElementById("lab-step").value),
+    dot_radius: Number(document.getElementById("lab-dot").value),
+    grid_n: Number(document.getElementById("lab-n").value),
+  };
+  try {
+    await apiLab("/api/admin/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    document.getElementById("lab-sync-btn").disabled = true;
+    document.getElementById("lab-status").textContent = "✓ 已同步到全局设置";
+  } catch(e) {
+    document.getElementById("lab-status").textContent = "✗ 同步失败: " + e.message;
+  }
+}
+function labStepChanged(){
+  document.getElementById("lab-step").value = document.getElementById("lab-step").value;
+}
+// drag-drop
+const drop = document.getElementById("lab-drop");
+drop.addEventListener("dragover", e=>{e.preventDefault(); drop.style.borderColor="var(--accent)";});
+drop.addEventListener("dragleave", ()=>{drop.style.borderColor="var(--line)";});
+drop.addEventListener("drop", e=>{
+  e.preventDefault(); drop.style.borderColor="var(--line)";
+  const f = e.dataTransfer.files[0];
+  if(f && f.type.startsWith("image/")){
+    const dt = new DataTransfer(); dt.items.add(f);
+    document.getElementById("lab-file").files = dt.files;
+    labUpload(document.getElementById("lab-file"));
+  }
+});
+labToggleMode();
+</script>
+</head>
+<body><input type="hidden" id="lab-base64" /></body>
+</html>
+""")
+
+@app.post("/api/lab/test")
+def lab_test(req: FaceBlurRequest):
+    """打码实验室 - 跳过缓存直接测试"""
+    import base64
+    img_bytes = None
+    if req.image_base64:
+        try:
+            img_bytes = base64.b64decode(req.image_base64)
+        except Exception:
+            raise HTTPException(400, "invalid base64 image")
+    elif req.image_url:
+        img_bytes = _download(str(req.image_url))
+    else:
+        raise HTTPException(400, "need image_base64 or image_url")
+    if len(img_bytes) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, "image too large")
+    t0 = time.perf_counter()
+    blur_params = {"adaptive": True, "min_face_skip": req.min_face_skip or 50}
+    if req.mode == "landmark_whole_face":
+        blur_params.update({
+            "dot_radius": req.dot_radius, "face_grid_step": req.face_grid_step,
+            "grid_n": req.grid_n or 5, "spacing": req.face_grid_step,
+        })
+    from face_blur import process_image
+    result = process_image(img_bytes, mode=req.mode, score_threshold=req.score_threshold,
+                          expand_ratio=req.expand_ratio, return_faces=True, **blur_params)
+    elapsed = (time.perf_counter() - t0) * 1000
+    out_b64 = base64.b64encode(result["image_bytes"]).decode("ascii")
+    return {
+        "ok": True, "face_count": result.get("face_count", 0),
+        "elapsed_ms": elapsed, "output_base64": out_b64,
+    }
+
 
 @app.get("/healthz")
 def healthz():
@@ -1533,6 +1759,7 @@ ADMIN_HTML = """
       <button class="tab active" data-tab="overview" onclick="showTab('overview')">概览</button>
       <button class="tab" data-tab="gallery" onclick="showGalleryTab()">图片库</button>
       <button class="tab" id="task-tab" data-tab="task" onclick="showTab('task')" hidden>任务详情</button>
+      <button class="tab" data-tab="settings" onclick="showTab('settings'); loadSettingsTab();">⚙ 全局设置</button>
     </nav>
     <div class="task-search">
       <input id="task-search" type="search" placeholder="输入任务 ID 或父任务ID 定位" aria-label="任务 ID" />
@@ -1550,15 +1777,28 @@ ADMIN_HTML = """
       <div class="card" style="border-color:var(--accent)"><div class="label">实时并发</div><div class="metric" id="m-inflight">-</div></div>
     </section>
 
+<div class="tab-view" data-tab="settings" hidden>
     <section class="panel" style="margin-bottom:14px">
-      <div class="panel-head"><h2>运行设置</h2><button class="btn secondary" onclick="saveSettings()">保存设置</button></div>
-      <div class="settings">
-        <div class="field"><label>并行任务上限</label><input id="s-concurrency" type="number" min="1" max="128" /></div>
-        <div class="field"><label>失败重试次数</label><input id="s-retries" type="number" min="0" max="10" /></div>
-        <div class="field"><label>重试退避秒</label><input id="s-backoff" type="number" min="0" max="10" step="0.1" /></div>
-        <div class="field"><label>图片保留小时</label><input id="s-ttl" type="number" min="1" max="8760" /></div>
+      <div class="panel-head"><h2>⚙ 全局设置</h2><button class="btn primary" onclick="saveSettings()">保存设置</button></div>
+      <div class="settings" style="gap:14px">
+        <div class="field" title="允许同时处理的最大并发请求数"><label>并行上限</label><input id="s-concurrency" type="number" min="1" max="128"/></div>
+        <div class="field" title="请求失败后的最大重试次数"><label>重试次数</label><input id="s-retries" type="number" min="0" max="10"/></div>
+        <div class="field" title="重试时每次等待的秒数增量"><label>退避秒数</label><input id="s-backoff" type="number" min="0" max="10" step="0.1"/></div>
+        <div class="field" title="静态图片的保留时长"><label>保留小时</label><input id="s-ttl" type="number" min="1" max="8760"/></div>
       </div>
     </section>
+    <section class="panel" style="margin-bottom:14px">
+      <div class="panel-head"><h2>🎨 打码全局默认参数</h2><span style="color:var(--text-dim);font-size:13px">调整后对新建请求生效（已缓存图不受影响）</span></div>
+      <div class="settings" style="gap:14px">
+        <div class="field" title="人脸检测置信度阈值(0.3-1.0) 越小越灵敏但误检越多"><label>检测阈值</label><input id="s-score" type="number" min="0.3" max="1.0" step="0.01"/></div>
+        <div class="field" title="扩框比例(0-1.0) 检测框向外扩展的安全余量"><label>扩框比例</label><input id="s-expand" type="number" min="0" max="1.0" step="0.05"/></div>
+        <div class="field" title="极小脸(脸宽<此值px)直接跳过不打码 0=全都打"><label>跳小脸(px)</label><input id="s-minface" type="number" min="0" max="500"/></div>
+        <div class="field" title="红点半径(px) 大脸固定3px 中脸2px 小脸1px"><label>红点半径</label><input id="s-dot" type="number" min="1" max="10"/></div>
+        <div class="field" title="打码网格间距(px) 越小越密 大脸14/中脸12/小脸20"><label>网格间距</label><input id="s-step" type="number" min="4" max="40"/></div>
+      </div>
+    </section>
+    <p id="settings-note" style="color:var(--text-dim);font-size:13px;margin:0 0 14px 0">提示: 打码参数中"检测阈值"和"扩框比例"对非 landmark 模式也生效</p>
+    </div>
 
     <section class="split">
       <div class="panel">
@@ -1726,6 +1966,13 @@ ADMIN_HTML = """
       document.getElementById('s-backoff').value = d.service.retry_backoff_seconds;
       document.getElementById('s-ttl').value = d.service.image_ttl_hours_effective || d.service.image_ttl_hours;
       setStatus(`并行 ${d.service.inflight_tasks}/${d.service.max_concurrent_tasks} · 24h ${d.requests.last_24h_ok}/${d.requests.last_24h} 成功 · 重试 ${d.requests.retried} 次 · 存储 ${fmtBytes(d.storage.bytes)} · PID ${d.service.pid}`);
+      // 全局设置标签页字段
+      const s = d.settings || {};
+      document.getElementById('s-score').value = s.score_threshold ?? 0.52;
+      document.getElementById('s-expand').value = s.expand_ratio ?? 0.30;
+      document.getElementById('s-minface').value = s.min_face_skip ?? 50;
+      document.getElementById('s-dot').value = s.dot_radius ?? 3;
+      document.getElementById('s-step').value = s.face_grid_step ?? 14;
     }
     function requestRecord(x){
       return {
@@ -1900,6 +2147,11 @@ ADMIN_HTML = """
         max_retries: Number(document.getElementById('s-retries').value),
         retry_backoff_seconds: Number(document.getElementById('s-backoff').value),
         image_ttl_hours: Number(document.getElementById('s-ttl').value),
+        score_threshold: Number(document.getElementById('s-score').value),
+        expand_ratio: Number(document.getElementById('s-expand').value),
+        min_face_skip: Number(document.getElementById('s-minface').value),
+        dot_radius: Number(document.getElementById('s-dot').value),
+        face_grid_step: Number(document.getElementById('s-step').value),
       };
       await api('/api/admin/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
       await loadSummary();
@@ -1910,6 +2162,17 @@ ADMIN_HTML = """
       const d = await api('/api/admin/cleanup', {method:'POST'});
       setStatus(`已删除 ${d.deleted_files} 个文件，释放 ${fmtBytes(d.freed_bytes)}`);
       await loadAll();
+    }
+    async function loadSettingsTab(){
+      document.getElementById('s-concurrency').value = document.getElementById('s-concurrency').value || 64;
+      document.getElementById('s-retries').value = document.getElementById('s-retries').value || 3;
+      document.getElementById('s-backoff').value = document.getElementById('s-backoff').value || 3;
+      document.getElementById('s-ttl').value = document.getElementById('s-ttl').value || 72;
+      if(document.getElementById('s-score').value == '') document.getElementById('s-score').value = 0.52;
+      if(document.getElementById('s-expand').value == '') document.getElementById('s-expand').value = 0.30;
+      if(document.getElementById('s-minface').value == '') document.getElementById('s-minface').value = 50;
+      if(document.getElementById('s-dot').value == '') document.getElementById('s-dot').value = 3;
+      if(document.getElementById('s-step').value == '') document.getElementById('s-step').value = 14;
     }
     async function loadAll(){
       try {
