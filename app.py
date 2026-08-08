@@ -452,9 +452,6 @@ def _require_admin(
     token: str | None = Query(default=None),
 ) -> None:
     if not ADMIN_TOKEN:
-        client = request.client.host if request.client else ""
-        if client in {"127.0.0.1", "::1", "localhost"}:
-            return
         raise HTTPException(403, "admin disabled: set FACE_BLUR_ADMIN_TOKEN")
 
     presented = x_admin_token or token or ""
