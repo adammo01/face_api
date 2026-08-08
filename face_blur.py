@@ -512,7 +512,14 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
             face_grid_step = None
             grid_n = None
 
+        # 极小人脸跳过打码 (原图直发已验证能过审, 保留远景细节)
+        min_face_skip = int(blur_params.get("min_face_skip", 0))
+
         for face in faces_list:
+            # 脸宽 < min_face_skip 直接跳过 (不打码, 原样保留远景小脸细节)
+            # 用原始脸宽 face.w 判断 (expand 后的 bw 会放大, 不准确)
+            if min_face_skip > 0 and face.w < min_face_skip:
+                continue
             box = face.expand(w, h, ratio=expand_ratio)
             bx, by, bw, bh = box.x, box.y, box.w, box.h
             if bw < 20 or bh < 20:
@@ -543,10 +550,22 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
                 pass
             region = img[by:by + bh, bx:bx + bw]
             if mode == "landmark_whole_face":
+                # 自适应密度: 小脸(远景)用更大的 step + 更小的点, 大脸保持默认
+                # adaptive_keep_step=True 时: 密度(step)不变, 只按比例缩小红点
+                if blur_params.get("adaptive", False):
+                    if blur_params.get("adaptive_keep_step", False):
+                        f_step = face_grid_step  # 密度不变
+                    else:
+                        f_step = int(np.clip(round(14.0 * (bw / 200.0) ** -0.5), 10, 32))
+                    # 红点超线性缩小: dot=3*(bw/200)^1.5
+                    # 小脸(<100px) → 1px (比大脸 3px 小 3 倍); 200px 大脸 → 3px
+                    f_dot = int(np.clip(round(3.0 * (bw / 200.0) ** 1.5), 1, 3))
+                else:
+                    f_step, f_dot = face_grid_step, dot_radius
                 region = _apply_landmark_whole_face_with_landmarks(
                     region, landmarks=landmarks,
-                    face_grid_step=face_grid_step, dot_radius=dot_radius,
-                    grid_n=grid_n, spacing=spacing, color=color,
+                    face_grid_step=f_step, dot_radius=f_dot,
+                    grid_n=grid_n, spacing=f_step, color=color,
                     region_box=(bx, by, bw, bh),
                 )
             else:  # landmark
