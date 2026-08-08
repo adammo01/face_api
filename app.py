@@ -1264,6 +1264,9 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
     user_agent = request.headers.get("user-agent", "")[:300]
     attempts = 1
     max_retries = _get_int_setting("max_retries", MAX_RETRIES, 0, 10)
+    _global_minface = _get_blur_default("min_face_skip", 50)
+    _global_dot = _get_blur_default("dot_radius", 3)
+    _global_step = _get_blur_default("face_grid_step", 14)
 
     log.info(f"[req] mode={req.mode}  url={image_url[:120]}...")
 
