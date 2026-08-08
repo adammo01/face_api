@@ -683,6 +683,9 @@ def _dl_session():
     if sess is None:
         import requests as _rq
         sess = _rq.Session()
+        # 图片源应由服务直接访问，避免本地/运行环境的 HTTP(S) 代理导致
+        # 第三方 CDN TLS 握手被代理的短超时中断。
+        sess.trust_env = False
         _adapter = _rq.adapters.HTTPAdapter(pool_connections=5, pool_maxsize=10)
         sess.mount("https://", _adapter)
         sess.mount("http://", _adapter)
@@ -961,13 +964,13 @@ def lab_page(request: Request):
     .spinner { display:inline-block; width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .6s linear infinite; vertical-align:middle; margin-right:6px; }
     @keyframes spin { to { transform:rotate(360deg); } }
     </style>
+</head>
+<body>
     <div class="lab-wrap">
       <h2>🧪 打码实验室</h2>
       <div class="lab-grid">
         <div>
-          <div style="margin-bottom:12px;display:flex;align-items:center;gap:8px" class="auth">
-    <input id="lab-token" type="password" placeholder="输入 Admin Token" style="flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:6px" />
-  </div>
+          <div class="hint" style="margin-bottom:12px">已使用管理页授权</div>
     <div class="lab-upload" onclick="document.getElementById('lab-file').click()" id="lab-drop">
             📁 点击上传图片 或拖拽到此处<br><small style="color:var(--text-dim)">支持 JPG/PNG/WebP, 最大 20MB</small>
             <input type="file" id="lab-file" accept="image/*" onchange="labUpload(this)" />
@@ -1008,12 +1011,15 @@ def lab_page(request: Request):
     </div>
 <script>
 const BASE = window.location.origin;
+const LAB_TOKEN = new URLSearchParams(location.search).get("token") || "";
 async function apiLab(path, opts={}){
-  const labTok = document.getElementById("lab-token").value.trim();
-  if(labTok){ opts.headers = opts.headers || {}; opts.headers["X-Admin-Token"] = labTok; }
+  if(LAB_TOKEN){ opts.headers = opts.headers || {}; opts.headers["X-Admin-Token"] = LAB_TOKEN; }
   const r = await fetch(BASE+path, opts);
   const t = await r.text();
-  try { return JSON.parse(t); } catch(e) { throw new Error(t); }
+  let data;
+  try { data = JSON.parse(t); } catch(e) { throw new Error(t || `请求失败 (${r.status})`); }
+  if(!r.ok){ throw new Error(data.detail || data.message || `请求失败 (${r.status})`); }
+  return data;
 }
 function labFileToBase64(file){
   return new Promise((ok,err)=>{
@@ -1051,7 +1057,7 @@ async function labTest(){
   const btn = document.getElementById("lab-test-btn");
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>处理中...';
-  document.getElementById("lab-status").textContent = "";
+  document.getElementById("lab-status").textContent = "正在提交打码请求...";
   try {
     const body = {mode: m,
       score_threshold: Number(document.getElementById("lab-score").value),
@@ -1081,7 +1087,7 @@ async function labTest(){
   btn.innerHTML = "🧪 执行打码";
 }
 async function labSyncGlobal(){
-  if(!confirm("将当前参数同步到全局设置？\n(对后续新建请求生效)")) return;
+  if(!confirm("将当前参数同步到全局设置？\\n(对后续新建请求生效)")) return;
   const body = {
     score_threshold: Number(document.getElementById("lab-score").value),
     expand_ratio: Number(document.getElementById("lab-expand").value),
@@ -1101,25 +1107,27 @@ async function labSyncGlobal(){
 function labStepChanged(){
   document.getElementById("lab-step").value = document.getElementById("lab-step").value;
 }
-// drag-drop
-const drop = document.getElementById("lab-drop");
-drop.addEventListener("dragover", e=>{e.preventDefault(); drop.style.borderColor="var(--accent)";});
-drop.addEventListener("dragleave", ()=>{drop.style.borderColor="var(--line)";});
-drop.addEventListener("drop", e=>{
-  e.preventDefault(); drop.style.borderColor="var(--line)";
-  const f = e.dataTransfer.files[0];
-  if(f && f.type.startsWith("image/")){
-    const dt = new DataTransfer(); dt.items.add(f);
-    document.getElementById("lab-file").files = dt.files;
-    labUpload(document.getElementById("lab-file"));
+// 页面内容在 head 之后才创建，所有 DOM 绑定必须延后到 DOMContentLoaded。
+window.addEventListener("DOMContentLoaded", () => {
+  const drop = document.getElementById("lab-drop");
+  if(drop){
+    drop.addEventListener("dragover", e=>{e.preventDefault(); drop.style.borderColor="var(--accent)";});
+    drop.addEventListener("dragleave", ()=>{drop.style.borderColor="var(--line)";});
+    drop.addEventListener("drop", e=>{
+      e.preventDefault(); drop.style.borderColor="var(--line)";
+      const f = e.dataTransfer.files[0];
+      if(f && f.type.startsWith("image/")){
+        const dt = new DataTransfer(); dt.items.add(f);
+        document.getElementById("lab-file").files = dt.files;
+        labUpload(document.getElementById("lab-file"));
+      }
+    });
   }
+  labToggleMode();
 });
-labToggleMode();
-const ut = new URLSearchParams(location.search).get("token");
-if(ut){ document.getElementById("lab-token").value = ut; }
 </script>
-</head>
-<body><input type="hidden" id="lab-base64" /></body>
+<input type="hidden" id="lab-base64" />
+</body>
 </html>
 """)
 
@@ -1135,21 +1143,32 @@ def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None =
         except Exception:
             raise HTTPException(400, "invalid base64 image")
     elif req.image_url:
-        img_bytes = _download(str(req.image_url))
+        try:
+            # 实验室常用于临时验证第三方 CDN 图片。单连接避免 Range 请求被
+            # 限流或其中一个分段超时，并给慢源足够的读取时间。
+            image_url = str(req.image_url)
+            _assert_public_url(image_url)
+            img_bytes = _download_fallback(image_url, timeout=max(DOWNLOAD_TIMEOUT, 60))
+        except Exception as exc:
+            raise HTTPException(400, f"图片 URL 下载失败: {exc}") from exc
     else:
         raise HTTPException(400, "need image_base64 or image_url")
     if len(img_bytes) > MAX_IMAGE_BYTES:
         raise HTTPException(413, "image too large")
     t0 = time.perf_counter()
-    blur_params = {"adaptive": True, "min_face_skip": req.min_face_skip or 50}
+    blur_params = {}
     if req.mode == "landmark_whole_face":
         blur_params.update({
+            "adaptive": True, "min_face_skip": req.min_face_skip or 50,
             "dot_radius": req.dot_radius, "face_grid_step": req.face_grid_step,
             "grid_n": req.grid_n or 5, "spacing": req.face_grid_step,
         })
     from face_blur import process_image
-    result = process_image(img_bytes, mode=req.mode, score_threshold=req.score_threshold,
-                          expand_ratio=req.expand_ratio, return_faces=True, **blur_params)
+    try:
+        result = process_image(img_bytes, mode=req.mode, score_threshold=req.score_threshold,
+                              expand_ratio=req.expand_ratio, return_faces=True, **blur_params)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     elapsed = (time.perf_counter() - t0) * 1000
     out_b64 = base64.b64encode(result["image_bytes"]).decode("ascii")
     return {
@@ -1834,7 +1853,7 @@ ADMIN_HTML = """
     </div>
 
     <div class="status" id="status">正在加载...</div>
-    <div class="tab-view" data-tab="overview">
+    <div class="tab-view" data-tab="overview-stats">
     <section class="grid">
       <div class="card"><div class="label">总请求</div><div class="metric" id="m-total">-</div></div>
       <div class="card"><div class="label">已打码</div><div class="metric" id="m-blocked">-</div></div>
@@ -1843,6 +1862,7 @@ ADMIN_HTML = """
       <div class="card"><div class="label">静态图片</div><div class="metric" id="m-files">-</div></div>
       <div class="card" style="border-color:var(--accent)"><div class="label">实时并发</div><div class="metric" id="m-inflight">-</div></div>
     </section>
+    </div>
 
 <div class="tab-view" data-tab="settings" hidden>
     <section class="panel" style="margin-bottom:14px">
@@ -1867,6 +1887,7 @@ ADMIN_HTML = """
     <p id="settings-note" style="color:var(--text-dim);font-size:13px;margin:0 0 14px 0">提示: 打码参数中"检测阈值"和"扩框比例"对非 landmark 模式也生效</p>
     </div>
 
+    <div class="tab-view" data-tab="overview">
     <section class="split">
       <div class="panel">
         <div class="panel-head">
@@ -2176,7 +2197,10 @@ ADMIN_HTML = """
     }
     function showTab(name){
       activeTab = name;
-      document.querySelectorAll('.tab-view').forEach(el => { el.hidden = el.dataset.tab !== name; });
+      document.querySelectorAll('.tab-view').forEach(el => {
+        const visible = el.dataset.tab === name || (name === 'overview' && el.dataset.tab === 'overview-stats');
+        el.hidden = !visible;
+      });
       document.querySelectorAll('.tab').forEach(el => el.classList.toggle('active', el.dataset.tab === name));
     }
     async function showGalleryTab(){
@@ -2233,9 +2257,11 @@ ADMIN_HTML = """
         dot_radius: Number(document.getElementById('s-dot').value),
         face_grid_step: Number(document.getElementById('s-step').value),
       };
-      await api('/api/admin/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-      await loadSummary();
-      setStatus('设置已保存');
+      try {
+        await api('/api/admin/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        await loadSummary();
+        setStatus('设置已保存');
+      } catch(e) { setStatus(`设置保存失败: ${e.message}`); }
     }
     async function cleanup(){
       if(!confirm('按当前 TTL 清理过期静态图片？')) return;
