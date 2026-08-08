@@ -289,6 +289,12 @@ def _set_settings(values: dict) -> dict:
         "max_retries": (0, 10, int),
         "retry_backoff_seconds": (0.0, 10.0, float),
         "image_ttl_hours": (1, 24 * 365, int),
+        "score_threshold": (0.1, 0.99, float),
+        "expand_ratio": (0.0, 1.0, float),
+        "min_face_skip": (0, 500, int),
+        "dot_radius": (1, 20, int),
+        "face_grid_step": (4, 60, int),
+        "grid_n": (1, 11, int),
     }
     saved = {}
     with _db() as conn:
@@ -920,7 +926,7 @@ def _public_url_for(path: Path, request_base: str) -> str:
 # ---------------------------------------------------------------------------
 
 @app.get("/lab")
-def lab_page():
+def lab_page(request: Request):
     """打码实验室 - 独立测试页面"""
     return HTMLResponse(content="""
 <!DOCTYPE html>
@@ -1111,8 +1117,9 @@ labToggleMode();
 """)
 
 @app.post("/api/lab/test")
-def lab_test(req: FaceBlurRequest):
-    """打码实验室 - 跳过缓存直接测试"""
+def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)):
+    """打码实验室 - 需要 Admin 鉴权"""
+    _require_admin(request, authorization, x_admin_token, token=None)
     import base64
     img_bytes = None
     if req.image_base64:
@@ -1314,7 +1321,7 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
                 score_threshold=req.score_threshold,
                 expand_ratio=req.expand_ratio,
                 return_faces=True,
-                adaptive=True, min_face_skip=50,
+                adaptive=True, min_face_skip=_global_minface,
                 **blur_params,
             ),
             max_retries=max_retries,
@@ -1631,20 +1638,6 @@ def admin_clear_cache(
     return {"ok": True, "cleared_l2": n, "note": "L1 (memory) cache persists until restart"}
 
 
-@app.post("/api/admin/clear-cache")
-def admin_clear_cache(
-    request: Request,
-    authorization: str | None = Header(default=None),
-    x_admin_token: str | None = Header(default=None),
-    token: str | None = Query(default=None),
-):
-    _require_admin(request, authorization, x_admin_token, token)
-    with _db() as conn:
-        n = conn.execute("SELECT COUNT(*) FROM blur_cache").fetchone()[0]
-        conn.execute("DELETE FROM blur_cache")
-        conn.commit()
-    return {"ok": True, "cleared_l2": n, "note": "L1 memory cache persists until restart"}
-
 
 @app.post("/api/admin/cleanup")
 def admin_cleanup(
@@ -1665,6 +1658,12 @@ class AdminSettingsRequest(BaseModel):
     max_retries: Optional[int] = Field(default=None, ge=0, le=10)
     retry_backoff_seconds: Optional[float] = Field(default=None, ge=0.0, le=10.0)
     image_ttl_hours: Optional[int] = Field(default=None, ge=1, le=24 * 365)
+    score_threshold: Optional[float] = Field(default=None, ge=0.1, le=0.99)
+    expand_ratio: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    min_face_skip: Optional[int] = Field(default=None, ge=0, le=500)
+    dot_radius: Optional[int] = Field(default=None, ge=1, le=20)
+    face_grid_step: Optional[int] = Field(default=None, ge=4, le=60)
+    grid_n: Optional[int] = Field(default=None, ge=1, le=11)
 
 
 @app.get("/api/admin/settings")
@@ -1683,11 +1682,6 @@ def admin_get_settings(
             "max_retries": _get_int_setting("max_retries", MAX_RETRIES, 0, 10),
             "retry_backoff_seconds": _get_float_setting("retry_backoff_seconds", RETRY_BACKOFF_SECONDS, 0.0, 10.0),
             "image_ttl_hours": _get_int_setting("image_ttl_hours", IMAGE_TTL_HOURS, 1, 24 * 365),
-            "score_threshold": _get_blur_default("score_threshold", 0.52),
-            "expand_ratio": _get_blur_default("expand_ratio", 0.30),
-            "min_face_skip": _get_blur_default("min_face_skip", 50),
-            "dot_radius": _get_blur_default("dot_radius", 3),
-            "face_grid_step": _get_blur_default("face_grid_step", 14),
             "score_threshold": _get_blur_default("score_threshold", 0.52),
             "expand_ratio": _get_blur_default("expand_ratio", 0.30),
             "min_face_skip": _get_blur_default("min_face_skip", 50),
@@ -1822,6 +1816,7 @@ ADMIN_HTML = """
       <button class="tab" data-tab="gallery" onclick="showGalleryTab()">图片库</button>
       <button class="tab" id="task-tab" data-tab="task" onclick="showTab('task')" hidden>任务详情</button>
       <button class="tab" data-tab="settings" onclick="showTab('settings'); loadSettingsTab();">⚙ 全局设置</button>
+    <a href="/lab" class="tab" style="text-decoration:none" target="_blank">🧪 实验室</a>
     </nav>
     <div class="task-search">
       <input id="task-search" type="search" placeholder="输入任务 ID 或父任务ID 定位" aria-label="任务 ID" />
@@ -2204,11 +2199,6 @@ ADMIN_HTML = """
       await loadGalleryPage();
     }
     async function clearCache(){
-      if(!confirm('确认清空所有 L2 打码缓存？ L1 内存缓存在重启后自动清空)')) return;
-      const d = await api('/api/admin/clear-cache', {method:'POST'});
-      setStatus('已清空 ' + (d.cleared_l2 || 0) + ' 条 L2 缓存');
-    }
-    async function clearCache(){
       if(!confirm("确认清空所有 L2 打码缓存? L1 重启后自动清空")) return;
       const d = await api("/api/admin/clear-cache", {method:"POST"});
       setStatus("已清空 " + (d.cleared_l2 || 0) + " 条 L2 缓存");
@@ -2236,16 +2226,21 @@ ADMIN_HTML = """
       await loadAll();
     }
     async function loadSettingsTab(){
-      document.getElementById('s-concurrency').value = document.getElementById('s-concurrency').value || 64;
-      document.getElementById('s-retries').value = document.getElementById('s-retries').value || 3;
-      document.getElementById('s-backoff').value = document.getElementById('s-backoff').value || 3;
-      document.getElementById('s-ttl').value = document.getElementById('s-ttl').value || 72;
-      if(document.getElementById('s-score').value == '') document.getElementById('s-score').value = 0.52;
-      if(document.getElementById('s-expand').value == '') document.getElementById('s-expand').value = 0.30;
-      if(document.getElementById('s-minface').value == '') document.getElementById('s-minface').value = 50;
-      if(document.getElementById('s-dot').value == '') document.getElementById('s-dot').value = 3;
-      if(document.getElementById('s-step').value == '') document.getElementById('s-step').value = 14;
+      try {
+        const d = await api('/api/admin/settings');
+        const s = d.settings || {};
+        document.getElementById('s-concurrency').value = s.max_concurrent_tasks ?? 64;
+        document.getElementById('s-retries').value = s.max_retries ?? 3;
+        document.getElementById('s-backoff').value = s.retry_backoff_seconds ?? 3;
+        document.getElementById('s-ttl').value = s.image_ttl_hours ?? 72;
+        document.getElementById('s-score').value = s.score_threshold ?? 0.52;
+        document.getElementById('s-expand').value = s.expand_ratio ?? 0.30;
+        document.getElementById('s-minface').value = s.min_face_skip ?? 50;
+        document.getElementById('s-dot').value = s.dot_radius ?? 3;
+        document.getElementById('s-step').value = s.face_grid_step ?? 14;
+      } catch(e) {}
     }
+
     async function loadAll(){
       try {
         await Promise.all([loadSummary(), loadRequests(), loadFiles()]);
