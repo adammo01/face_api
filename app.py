@@ -109,8 +109,6 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("faceblur-api")
 
-_INFLIGHT_LOCK = threading.Lock()
-_INFLIGHT_TASKS = 0
 
 # ---------------------------------------------------------------------------
 # FastAPI app
@@ -296,21 +294,28 @@ def _set_settings(values: dict) -> dict:
     return saved
 
 
-def _inflight_incr() -> None:
-    """跨 worker 共享并发计数 (SQLite 单行, WAL 下开销极小)."""
+def _inflight_try_acquire(limit: int) -> bool:
+    """原子操作: n < limit 时 +1, 否则返回 False (被拒绝)."""
     for _ in range(3):
         try:
             with _db() as conn:
-                conn.execute("UPDATE inflight_counter SET n = n + 1 WHERE id = 1")
-            return
+                conn.execute(
+                    "UPDATE inflight_counter SET n = n + 1 WHERE id = 1 AND n < ?",
+                    (limit,),
+                )
+                return conn.total_changes > 0
         except Exception:
             time.sleep(0.02)
+    return False
 
-def _inflight_decr() -> None:
+def _inflight_release() -> None:
+    """释放并发槽位 (n - 1)."""
     for _ in range(3):
         try:
             with _db() as conn:
-                conn.execute("UPDATE inflight_counter SET n = MAX(0, n - 1) WHERE id = 1")
+                conn.execute(
+                    "UPDATE inflight_counter SET n = MAX(0, n - 1) WHERE id = 1"
+                )
             return
         except Exception:
             time.sleep(0.02)
@@ -326,19 +331,23 @@ def _inflight_read() -> int:
 
 @contextmanager
 def _task_slot():
-    global _INFLIGHT_TASKS
     limit = _get_int_setting("max_concurrent_tasks", DEFAULT_MAX_CONCURRENT_TASKS, 1, 128)
-    with _INFLIGHT_LOCK:
-        if _INFLIGHT_TASKS >= limit:
-            raise HTTPException(429, f"too many concurrent tasks ({_INFLIGHT_TASKS}/{limit})")
-        _INFLIGHT_TASKS += 1
-    _inflight_incr()
+    deadline = time.perf_counter() + 30
+    attempt = 0
+    while True:
+        if _inflight_try_acquire(limit):
+            break
+        attempt += 1
+        if time.perf_counter() >= deadline:
+            raise HTTPException(
+                429,
+                f"too many concurrent tasks (limit {limit}), gave up after {attempt} retries",
+            )
+        time.sleep(min(0.5 * attempt, 3))
     try:
         yield limit
     finally:
-        _inflight_decr()
-        with _INFLIGHT_LOCK:
-            _INFLIGHT_TASKS = max(0, _INFLIGHT_TASKS - 1)
+        _inflight_release()
 
 
 def _insert_request(row: dict) -> None:
