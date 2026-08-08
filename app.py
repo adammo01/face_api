@@ -965,7 +965,10 @@ def lab_page(request: Request):
       <h2>🧪 打码实验室</h2>
       <div class="lab-grid">
         <div>
-          <div class="lab-upload" onclick="document.getElementById('lab-file').click()" id="lab-drop">
+          <div style="margin-bottom:12px;display:flex;align-items:center;gap:8px" class="auth">
+    <input id="lab-token" type="password" placeholder="输入 Admin Token" style="flex:1;padding:10px 12px;border:1px solid var(--line);border-radius:6px" />
+  </div>
+    <div class="lab-upload" onclick="document.getElementById('lab-file').click()" id="lab-drop">
             📁 点击上传图片 或拖拽到此处<br><small style="color:var(--text-dim)">支持 JPG/PNG/WebP, 最大 20MB</small>
             <input type="file" id="lab-file" accept="image/*" onchange="labUpload(this)" />
           </div>
@@ -1006,6 +1009,8 @@ def lab_page(request: Request):
 <script>
 const BASE = window.location.origin;
 async function apiLab(path, opts={}){
+  const labTok = document.getElementById("lab-token").value.trim();
+  if(labTok){ opts.headers = opts.headers || {}; opts.headers["X-Admin-Token"] = labTok; }
   const r = await fetch(BASE+path, opts);
   const t = await r.text();
   try { return JSON.parse(t); } catch(e) { throw new Error(t); }
@@ -1110,6 +1115,8 @@ drop.addEventListener("drop", e=>{
   }
 });
 labToggleMode();
+const ut = new URLSearchParams(location.search).get("token");
+if(ut){ document.getElementById("lab-token").value = ut; }
 </script>
 </head>
 <body><input type="hidden" id="lab-base64" /></body>
@@ -1816,7 +1823,7 @@ ADMIN_HTML = """
       <button class="tab" data-tab="gallery" onclick="showGalleryTab()">图片库</button>
       <button class="tab" id="task-tab" data-tab="task" onclick="showTab('task')" hidden>任务详情</button>
       <button class="tab" data-tab="settings" onclick="showTab('settings'); loadSettingsTab();">⚙ 全局设置</button>
-    <a href="/lab" class="tab" style="text-decoration:none" target="_blank">🧪 实验室</a>
+    <a id="lab-link" href="/lab" class="tab" style="text-decoration:none" target="_blank">🧪 实验室</a>
     </nav>
     <div class="task-search">
       <input id="task-search" type="search" placeholder="输入任务 ID 或父任务ID 定位" aria-label="任务 ID" />
@@ -2242,6 +2249,7 @@ ADMIN_HTML = """
     }
 
     async function loadAll(){
+      try { const t = localStorage.getItem("token") || ""; document.getElementById("lab-link").href = "/lab?token=" + encodeURIComponent(t); } catch(e) {}
       try {
         await Promise.all([loadSummary(), loadRequests(), loadFiles()]);
         if(activeTab === 'gallery') await loadGalleryPage();
