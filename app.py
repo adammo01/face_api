@@ -1074,6 +1074,7 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
                 score_threshold=req.score_threshold,
                 expand_ratio=req.expand_ratio,
                 return_faces=True,
+                adaptive=True, min_face_skip=50,
                 **blur_params,
             ),
             max_retries=max_retries,
