@@ -921,7 +921,7 @@ def healthz():
 def face_blur(req: FaceBlurRequest, request: Request):
     task_id = uuid.uuid4().hex
     # E: 计算缓存 key (L1 + L2 共用)
-    _cache_req_json = json.dumps(req.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
+    _cache_req_json = json.dumps({k:v for k,v in req.model_dump(mode="json").items() if k not in ("parent_task_id","callback_url")}, sort_keys=True, ensure_ascii=False)
     _ck = _cache_key(str(req.image_url), _cache_req_json)
 
     # L1: 内存缓存
