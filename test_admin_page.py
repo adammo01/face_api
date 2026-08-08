@@ -105,6 +105,16 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('localStorage.setItem(LAB_PRESETS_KEY', APP_SOURCE)
         self.assertIn('labSetParams(LAB_DEFAULTS);', APP_SOURCE)
 
+    def test_lab_shows_before_and_after_face_confidence(self):
+        self.assertIn('id="lab-confidence-before"', APP_SOURCE)
+        self.assertIn('id="lab-confidence-after"', APP_SOURCE)
+        self.assertIn('d.confidence.before', APP_SOURCE)
+        self.assertIn('d.confidence.after', APP_SOURCE)
+        self.assertIn('"confidence": {"threshold": req.score_threshold', APP_SOURCE)
+
+    def test_global_settings_has_one_clear_cache_button(self):
+        self.assertEqual(ADMIN_HTML.count('onclick="clearCache()"'), 1)
+
     def test_task_id_can_be_searched_and_copied(self):
         self.assertIn('id="task-search"', ADMIN_HTML)
         self.assertIn('function findTask()', ADMIN_HTML)
@@ -116,6 +126,13 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('offset: int = Query(0, ge=0)', APP_SOURCE)
         self.assertIn('"total": total', APP_SOURCE)
         self.assertIn('"has_more": offset + len(rows) < total', APP_SOURCE)
+
+    def test_cached_results_keep_gallery_file_association(self):
+        self.assertIn('"output_file": _cached.get("output_file") or _static_name_from_url', APP_SOURCE)
+        self.assertIn('"output_file": _db_url.get("output_file") or _static_name_from_url', APP_SOURCE)
+        self.assertIn('idx_requests_parent_output', APP_SOURCE)
+        self.assertIn('idx_requests_parent_id', APP_SOURCE)
+        self.assertIn('output_file IS NOT NULL OR output_url IS NOT NULL', APP_SOURCE)
 
     def test_task_tracking_schema_and_routes_exist(self):
         self.assertIn('task_id TEXT', APP_SOURCE)

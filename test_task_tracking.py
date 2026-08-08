@@ -1,10 +1,12 @@
 import importlib.util
+import base64
 import os
 import sqlite3
 import sys
 import tempfile
 import types
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
@@ -100,6 +102,147 @@ class TaskTrackingTests(unittest.TestCase):
         self.assertEqual(status.json()['status'], 'download_error')
         self.assertIn('upstream unavailable', status.json()['error'])
 
+    def test_cached_request_remains_visible_when_filtered_by_parent_task(self):
+        self.module._RESPONSE_CACHE.clear()
+        processed = {
+            'image_bytes': b'cached-image',
+            'face_count': 1,
+            'elapsed_ms': 4.0,
+            'faces': [],
+        }
+        image_url = 'https://example.com/cache-parent.jpg'
+        with patch.object(self.module, '_download', return_value=b'input-image'), \
+                patch.object(self.module, 'process_image', return_value=processed):
+            first = self.client.post(
+                '/api/face_blur',
+                json={'image_url': image_url, 'mode': 'gaussian', 'parent_task_id': 'batch-original'},
+            )
+        self.assertEqual(first.status_code, 200)
+        output_file = first.json()['output_file']
+
+        cached = self.client.post(
+            '/api/face_blur',
+            json={'image_url': image_url, 'mode': 'gaussian', 'parent_task_id': 'batch-cached'},
+        )
+        self.assertEqual(cached.status_code, 200)
+        self.assertEqual(cached.json()['output_file'], output_file)
+        cached_task_id = cached.json()['task_id']
+
+        files = self.client.get(
+            '/api/admin/files?offset=0&limit=10&parent_task_id=batch-cached',
+            headers={'X-Admin-Token': 'test-admin'},
+        )
+        self.assertEqual(files.status_code, 200)
+        self.assertEqual(files.json()['total'], 1)
+        self.assertEqual(files.json()['items'][0]['name'], output_file)
+        self.assertEqual(files.json()['items'][0]['task_id'], cached_task_id)
+
+    def test_global_blur_defaults_apply_only_when_request_omits_them(self):
+        processed = {
+            'image_bytes': b'global-settings-image',
+            'face_count': 1,
+            'elapsed_ms': 4.0,
+            'faces': [],
+        }
+        settings = {
+            'score_threshold': 0.61,
+            'expand_ratio': 0.40,
+            'min_face_skip': 75,
+            'dot_radius': 4,
+            'face_grid_step': 16,
+            'grid_n': 7,
+        }
+        saved = self.client.post(
+            '/api/admin/settings',
+            headers={'X-Admin-Token': 'test-admin'},
+            json=settings,
+        )
+        self.assertEqual(saved.status_code, 200)
+
+        with patch.object(self.module, '_download', return_value=b'input-image'), \
+                patch.object(self.module, 'process_image', return_value=processed) as process_mock:
+            defaulted = self.client.post(
+                '/api/face_blur',
+                json={'image_url': 'https://example.com/global-default.jpg', 'mode': 'landmark_whole_face'},
+            )
+            explicit = self.client.post(
+                '/api/face_blur',
+                json={
+                    'image_url': 'https://example.com/explicit-default.jpg',
+                    'mode': 'landmark_whole_face',
+                    'score_threshold': 0.45,
+                    'min_face_skip': 20,
+                },
+            )
+        self.assertEqual(defaulted.status_code, 200)
+        self.assertEqual(explicit.status_code, 200)
+        first_kwargs = process_mock.call_args_list[0].kwargs
+        second_kwargs = process_mock.call_args_list[1].kwargs
+        self.assertEqual(first_kwargs['score_threshold'], 0.61)
+        self.assertEqual(first_kwargs['min_face_skip'], 75)
+        self.assertEqual(first_kwargs['face_grid_step'], 16)
+        self.assertEqual(first_kwargs['grid_n'], 7)
+        self.assertEqual(second_kwargs['score_threshold'], 0.45)
+        self.assertEqual(second_kwargs['min_face_skip'], 20)
+
+        loaded = self.client.get(
+            '/api/admin/settings', headers={'X-Admin-Token': 'test-admin'}
+        )
+        self.assertEqual(loaded.json()['settings']['grid_n'], 7)
+        self.client.post(
+            '/api/admin/settings',
+            headers={'X-Admin-Token': 'test-admin'},
+            json={
+                'score_threshold': 0.52,
+                'expand_ratio': 0.30,
+                'min_face_skip': 50,
+                'dot_radius': 3,
+                'face_grid_step': 14,
+                'grid_n': 5,
+            },
+        )
+
+    def test_clear_cache_removes_memory_cache(self):
+        self.module._cache_set('test-key', {'ok': True})
+        old_epoch = self.module._get_setting('cache_epoch', '0')
+        response = self.client.post(
+            '/api/admin/clear-cache', headers={'X-Admin-Token': 'test-admin'}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(response.json()['cleared_l1'], 1)
+        self.assertIsNone(self.module._cache_get('test-key'))
+        self.assertNotEqual(self.module._get_setting('cache_epoch', '0'), old_epoch)
+
+    def test_lab_returns_before_and_after_confidence_summary(self):
+        before = {
+            'image_bytes': b'blurred-image',
+            'face_count': 2,
+            'elapsed_ms': 4.0,
+            'faces': [{'score': 0.91}, {'score': 0.73}],
+        }
+        after = {
+            'image_bytes': b'probe-image',
+            'face_count': 1,
+            'elapsed_ms': 2.0,
+            'faces': [{'score': 0.55}],
+        }
+        image_b64 = base64.b64encode(b'input-image').decode('ascii')
+        with patch.object(sys.modules['face_blur'], 'process_image', side_effect=[before, after]) as process_mock:
+            response = self.client.post(
+                '/api/lab/test',
+                headers={'X-Admin-Token': 'test-admin'},
+                json={'image_base64': image_b64, 'mode': 'gaussian', 'score_threshold': 0.52},
+            )
+        self.assertEqual(response.status_code, 200)
+        confidence = response.json()['confidence']
+        self.assertEqual(confidence['threshold'], 0.52)
+        self.assertEqual(confidence['before']['face_count'], 2)
+        self.assertEqual(confidence['before']['max_score'], 0.91)
+        self.assertEqual(confidence['before']['avg_score'], 0.82)
+        self.assertEqual(confidence['after']['face_count'], 1)
+        self.assertEqual(confidence['after']['max_score'], 0.55)
+        self.assertEqual(process_mock.call_count, 2)
+
     def test_validation_failure_is_recorded_with_task_id(self):
         response = self.client.post(
             '/api/face_blur?source=invalid-test',
@@ -131,10 +274,14 @@ class TaskTrackingTests(unittest.TestCase):
         self.assertEqual(status['status'], 'rejected')
 
     def test_database_migration_adds_task_columns(self):
-        with sqlite3.connect(self.module.DB_PATH) as conn:
+        with closing(sqlite3.connect(self.module.DB_PATH)) as conn:
             columns = {row[1] for row in conn.execute('PRAGMA table_info(requests)')}
         self.assertIn('task_id', columns)
         self.assertIn('response_json', columns)
+        with closing(sqlite3.connect(self.module.DB_PATH)) as conn:
+            indexes = {row[1] for row in conn.execute("PRAGMA index_list('requests')")}
+        self.assertIn('idx_requests_parent_output', indexes)
+        self.assertIn('idx_requests_parent_id', indexes)
 
 
 if __name__ == '__main__':

@@ -125,11 +125,19 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _db() -> sqlite3.Connection:
+@contextmanager
+def _db():
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _init_db() -> None:
@@ -190,6 +198,15 @@ def _init_db() -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_task_id ON requests(task_id)"
         )
         conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_requests_parent_output ON requests(parent_task_id, output_file)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_requests_parent_id ON requests(parent_task_id, id DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_requests_output_file ON requests(output_file)"
+        )
+        conn.execute(
             """
             CREATE TABLE IF NOT EXISTS cleanup_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -215,6 +232,7 @@ def _init_db() -> None:
             "max_retries": str(MAX_RETRIES),
             "retry_backoff_seconds": str(RETRY_BACKOFF_SECONDS),
             "image_ttl_hours": str(IMAGE_TTL_HOURS),
+            "cache_epoch": "0",
         }
         for key, value in defaults.items():
             conn.execute(
@@ -311,6 +329,17 @@ def _set_settings(values: dict) -> dict:
             )
             saved[key] = val
     return saved
+
+
+def _bump_cache_epoch() -> str:
+    epoch = uuid.uuid4().hex
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO settings (key, value, updated_at) VALUES ('cache_epoch', ?, ?)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+            (epoch, _utc_now()),
+        )
+    return epoch
 
 
 def _inflight_try_acquire(limit: int) -> bool:
@@ -504,18 +533,32 @@ def _task_row(row: sqlite3.Row | dict) -> dict:
 def _static_files(offset: int = 0, limit: int | None = None,
                   include_task_id: bool = False,
                   parent_task_id: str | None = None) -> tuple[list[dict], int]:
-    paths = sorted(STATIC_DIR.glob("*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
+    parent_task_map = {}
     if parent_task_id:
+        paths = []
         try:
             with _db() as conn:
                 rows = conn.execute(
-                    "SELECT DISTINCT output_file FROM requests WHERE parent_task_id=? AND output_file IS NOT NULL",
+                    """SELECT output_file, output_url, task_id FROM requests
+                       WHERE parent_task_id=? AND (output_file IS NOT NULL OR output_url IS NOT NULL)
+                       ORDER BY id DESC""",
                     (parent_task_id,),
                 ).fetchall()
-                allowed = {r[0] for r in rows}
-                paths = [p for p in paths if p.name in allowed]
-        except Exception:
-            pass
+                allowed = []
+                seen = set()
+                for row in rows:
+                    name = Path(row["output_file"]).name if row["output_file"] else _static_name_from_url(row["output_url"])
+                    if name.endswith(".jpg") and name not in seen:
+                        allowed.append(name)
+                        seen.add(name)
+                    if name.endswith(".jpg") and name not in parent_task_map:
+                        parent_task_map[name] = row["task_id"]
+                candidates = [STATIC_DIR / name for name in allowed]
+                paths = [path for path in candidates if path.is_file()]
+        except Exception as e:
+            log.warning("parent gallery lookup failed: %s", e)
+    else:
+        paths = sorted(STATIC_DIR.glob("*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
     total = len(paths)
     if limit is not None:
         paths = paths[offset:offset + limit]
@@ -525,14 +568,18 @@ def _static_files(offset: int = 0, limit: int | None = None,
     task_map = {}
     if include_task_id and paths:
         try:
-            file_names = [p.name for p in paths]
-            with _db() as conn:
-                placeholders = ",".join("?" for _ in file_names)
-                rows = conn.execute(
-                    f"SELECT output_file, task_id FROM requests WHERE output_file IN ({placeholders})",
-                    file_names,
-                ).fetchall()
-                task_map = {r["output_file"]: r["task_id"] for r in rows}
+            if parent_task_id:
+                task_map = {path.name: parent_task_map.get(path.name, "") for path in paths}
+            else:
+                file_names = [p.name for p in paths]
+                with _db() as conn:
+                    placeholders = ",".join("?" for _ in file_names)
+                    rows = conn.execute(
+                        f"SELECT output_file, task_id FROM requests WHERE output_file IN ({placeholders}) ORDER BY id DESC",
+                        file_names,
+                    ).fetchall()
+                    for row in rows:
+                        task_map.setdefault(row["output_file"], row["task_id"])
         except Exception as e:
             log.warning("task_id lookup failed: %s", e)
     files = []
@@ -548,6 +595,46 @@ def _static_files(offset: int = 0, limit: int | None = None,
             item["task_id"] = task_map.get(path.name, "")
         files.append(item)
     return files, total
+
+
+def _static_name_from_url(url: str | None) -> str:
+    """从本服务静态图片 URL 兼容推导文件名，覆盖旧缓存记录。"""
+    if not url:
+        return ""
+    try:
+        path = _urlparse_mod.urlparse(str(url)).path
+        if "/static/" not in path:
+            return ""
+        name = Path(path).name
+        return name if name.endswith(".jpg") else ""
+    except Exception:
+        return ""
+
+
+_STORAGE_STATS_LOCK = threading.Lock()
+_STORAGE_STATS_CACHE = {"expires": 0.0, "file_count": 0, "bytes": 0}
+
+
+def _storage_stats() -> dict:
+    now = time.monotonic()
+    with _STORAGE_STATS_LOCK:
+        if _STORAGE_STATS_CACHE["expires"] > now:
+            return {"file_count": _STORAGE_STATS_CACHE["file_count"], "bytes": _STORAGE_STATS_CACHE["bytes"]}
+        file_count = 0
+        total_bytes = 0
+        for path in STATIC_DIR.glob("*.jpg"):
+            try:
+                total_bytes += path.stat().st_size
+                file_count += 1
+            except FileNotFoundError:
+                continue
+        _STORAGE_STATS_CACHE.update(expires=now + 15.0, file_count=file_count, bytes=total_bytes)
+        return {"file_count": file_count, "bytes": total_bytes}
+
+
+def _invalidate_storage_stats() -> None:
+    with _STORAGE_STATS_LOCK:
+        _STORAGE_STATS_CACHE["expires"] = 0.0
 
 
 def _cleanup_static(ttl_hours: int = IMAGE_TTL_HOURS) -> dict:
@@ -566,6 +653,8 @@ def _cleanup_static(ttl_hours: int = IMAGE_TTL_HOURS) -> dict:
                 deleted += 1
             except FileNotFoundError:
                 continue
+        if deleted:
+            _invalidate_storage_stats()
         return {"deleted_files": deleted, "freed_bytes": freed, "ttl_hours": ttl_hours}
     except Exception as e:  # noqa: BLE001
         error = str(e)
@@ -847,9 +936,15 @@ def _cache_set(key: str, resp: dict):
                 _RESPONSE_CACHE.popitem(last=False)
             _RESPONSE_CACHE[key] = {"ts": time.time(), "resp": resp}
 
+def _cache_clear() -> int:
+    with _CACHE_LOCK:
+        count = len(_RESPONSE_CACHE)
+        _RESPONSE_CACHE.clear()
+        return count
+
 # DB 持久缓存 (L2): 原始URL->打码后URL 映射, 进程重启不丢
 def _db_cache_get(cache_key: str):
-    """查询 L2 缓存。返回 output_url 或 None。过期/文件丢失自动清理。"""
+    """查询 L2 缓存。返回图片地址和文件名；过期/文件丢失自动清理。"""
     try:
         with _db() as conn:
             row = conn.execute(
@@ -866,7 +961,7 @@ def _db_cache_get(cache_key: str):
         if not out_path.exists():
             _db_cache_del(cache_key)
             return None
-        return row["output_url"]
+        return {"output_url": row["output_url"], "output_file": row["output_file"]}
     except Exception as e:
         log.warning("db_cache_get failed: %s", e)
         return None
@@ -955,6 +1050,10 @@ def lab_page(request: Request):
     .lab-image-modal img { max-width:96vw; max-height:90vh; width:auto; object-fit:contain; background:#111; }
     .lab-image-modal-close { position:fixed; top:12px; right:18px; border:0; background:transparent; color:white; font-size:32px; cursor:pointer; }
     .lab-preview .label { font-size:12px; color:var(--text-dim); text-align:center; margin-top:4px; }
+    .lab-confidence { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
+    .lab-confidence-card { border:1px solid var(--line); border-radius:6px; padding:10px; background:var(--bg-card); }
+    .lab-confidence-card strong { display:block; font-size:13px; margin-bottom:5px; }
+    .lab-confidence-card span { display:block; font-size:12px; color:var(--text-dim); line-height:1.6; }
     .lab-params { background:var(--bg-card); padding:16px; border-radius:8px; border:1px solid var(--line); }
     .lab-params h3 { margin:0 0 12px; font-size:16px; }
     .lab-param { margin-bottom:12px; }
@@ -989,6 +1088,10 @@ def lab_page(request: Request):
           <div class="lab-preview" id="lab-preview">
             <div><img id="lab-before" style="display:none" onclick="labOpenPreview(this)" /><div class="label">原图</div></div>
             <div><img id="lab-after" style="display:none" onclick="labOpenPreview(this)" /><div class="label">打码结果<span id="lab-face-info"></span></div></div>
+          </div>
+          <div class="lab-confidence" id="lab-confidence" hidden>
+            <div class="lab-confidence-card"><strong>原图人脸置信度</strong><span id="lab-confidence-before">-</span></div>
+            <div class="lab-confidence-card"><strong>打码后人脸置信度</strong><span id="lab-confidence-after">-</span></div>
           </div>
         </div>
         <div class="lab-params">
@@ -1067,6 +1170,7 @@ async function labUpload(input){
   const bf = document.getElementById("lab-before");
   bf.src = u; bf.style.display = "";
   document.getElementById("lab-after").style.display = "none";
+  document.getElementById("lab-confidence").hidden = true;
   document.getElementById("lab-status").textContent = "图片已就绪, 点击「执行打码」";
   document.getElementById("lab-url").value = "";
   document.getElementById("lab-sync-btn").disabled = true;
@@ -1154,6 +1258,7 @@ async function labTest(){
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>处理中...';
   document.getElementById("lab-status").textContent = "正在提交打码请求...";
+  document.getElementById("lab-confidence").hidden = true;
   try {
     const body = {mode: m,
       score_threshold: Number(document.getElementById("lab-score").value),
@@ -1170,6 +1275,13 @@ async function labTest(){
     af.src = "data:image/jpeg;base64," + d.output_base64;
     af.style.display = "";
     document.getElementById("lab-face-info").textContent = " (" + d.face_count + "张脸, " + (d.elapsed_ms||0).toFixed(0) + "ms)";
+    const confidenceText = value => {
+      const scores = value.scores || [];
+      return value.face_count + " 张脸 · 最高 " + (value.max_score * 100).toFixed(1) + "% · 平均 " + (value.avg_score * 100).toFixed(1) + "%" + (scores.length ? " · 明细 " + scores.map(score => (score * 100).toFixed(1) + "%").join("、") : "");
+    };
+    document.getElementById("lab-confidence-before").textContent = confidenceText(d.confidence.before);
+    document.getElementById("lab-confidence-after").textContent = confidenceText(d.confidence.after);
+    document.getElementById("lab-confidence").hidden = false;
     document.getElementById("lab-status").textContent = "✓ 完成";
     document.getElementById("lab-sync-btn").disabled = false;
     if(!b64 && url){
@@ -1242,6 +1354,22 @@ window.addEventListener("DOMContentLoaded", () => {
 </html>
 """)
 
+def _confidence_summary(faces: list) -> dict:
+    scores = []
+    for face in faces:
+        try:
+            score = float(face.get("score", 0)) if isinstance(face, dict) else float(face.score)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        scores.append(round(max(0.0, min(1.0, score)), 4))
+    return {
+        "face_count": len(scores),
+        "max_score": max(scores, default=0.0),
+        "avg_score": round(sum(scores) / len(scores), 4) if scores else 0.0,
+        "scores": scores,
+    }
+
+
 @app.post("/api/lab/test")
 def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)):
     """打码实验室 - 需要 Admin 鉴权"""
@@ -1282,9 +1410,20 @@ def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None =
         raise HTTPException(400, str(exc)) from exc
     elapsed = (time.perf_counter() - t0) * 1000
     out_b64 = base64.b64encode(result["image_bytes"]).decode("ascii")
+    before_confidence = _confidence_summary(result.get("faces", []))
+    try:
+        after_probe = process_image(
+            result["image_bytes"], mode="gaussian",
+            score_threshold=req.score_threshold, expand_ratio=0, return_faces=True,
+        )
+        after_confidence = _confidence_summary(after_probe.get("faces", []))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("lab post-blur confidence detection failed: %s", exc)
+        after_confidence = _confidence_summary([])
     return {
         "ok": True, "face_count": result.get("face_count", 0),
         "elapsed_ms": elapsed, "output_base64": out_b64,
+        "confidence": {"threshold": req.score_threshold, "before": before_confidence, "after": after_confidence},
     }
 
 
@@ -1304,12 +1443,26 @@ def healthz():
 @app.post("/api/face_blur")
 def face_blur(req: FaceBlurRequest, request: Request):
     task_id = uuid.uuid4().hex
+    explicit = req.model_fields_set
+    effective_params = {
+        "score_threshold": req.score_threshold if "score_threshold" in explicit else _get_blur_default("score_threshold", 0.52),
+        "expand_ratio": req.expand_ratio if "expand_ratio" in explicit else _get_blur_default("expand_ratio", 0.30),
+        "min_face_skip": req.min_face_skip if "min_face_skip" in explicit else int(_get_blur_default("min_face_skip", 50)),
+        "dot_radius": req.dot_radius if "dot_radius" in explicit else int(_get_blur_default("dot_radius", 3)),
+        "face_grid_step": req.face_grid_step if "face_grid_step" in explicit else int(_get_blur_default("face_grid_step", 14)),
+        "grid_n": req.grid_n if "grid_n" in explicit else int(_get_blur_default("grid_n", 5)),
+    }
     # E: 计算缓存 key (L1 + L2 共用)
-    _cache_req_json = json.dumps({k:v for k,v in req.model_dump(mode="json").items() if k not in ("parent_task_id","callback_url")}, sort_keys=True, ensure_ascii=False)
-    _ck = _cache_key(str(req.image_url), _cache_req_json)
+    _cache_payload = {k:v for k,v in req.model_dump(mode="json").items() if k not in ("parent_task_id","callback_url","image_base64")}
+    _cache_payload.update(effective_params)
+    if req.image_url:
+        _cache_payload["cache_epoch"] = _get_setting("cache_epoch", "0")
+    _cache_req_json = json.dumps(_cache_payload, sort_keys=True, ensure_ascii=False)
+    # Base64 图片没有稳定的 URL 标识，不能按 None 参与缓存，否则不同图片会碰撞。
+    _ck = _cache_key(str(req.image_url), _cache_req_json) if req.image_url else ""
 
     # L1: 内存缓存
-    _cached = _cache_get(_ck)
+    _cached = _cache_get(_ck) if _ck else None
     if _cached is not None:
         log.info("[cache] L1 hit")
         r = {**_cached, "task_id": task_id, "parent_task_id": req.parent_task_id or ""}
@@ -1323,6 +1476,7 @@ def face_blur(req: FaceBlurRequest, request: Request):
             "process_ms": 0,
             "image_url": str(req.image_url),
             "output_url": _cached.get("output_url", ""),
+            "output_file": _cached.get("output_file") or _static_name_from_url(_cached.get("output_url")),
             "parent_task_id": req.parent_task_id,
             "client_ip": request.client.host if request.client else None,
             "user_agent": request.headers.get("user-agent", "")[:300],
@@ -1332,10 +1486,11 @@ def face_blur(req: FaceBlurRequest, request: Request):
         return r
 
     # L2: DB 持久缓存
-    _db_url = _db_cache_get(_ck)
+    _db_url = _db_cache_get(_ck) if _ck else None
     if _db_url is not None:
         # 构造与正常打码一致的响应
         log.info("[cache] L2 hit")
+        _cached_output_url = _db_url["output_url"]
         r = {
             "task_id": task_id,
             "ok": True,
@@ -1343,7 +1498,7 @@ def face_blur(req: FaceBlurRequest, request: Request):
             "face_count": -1,
             "elapsed_ms": 0,
             "mode": req.mode,
-            "output_url": _db_url,
+            "output_url": _cached_output_url,
             "original_url": str(req.image_url),
             "parent_task_id": req.parent_task_id or "",
             "cached": True,
@@ -1357,7 +1512,8 @@ def face_blur(req: FaceBlurRequest, request: Request):
             "elapsed_ms": 0,
             "process_ms": 0,
             "image_url": str(req.image_url),
-            "output_url": _db_url,
+            "output_url": _cached_output_url,
+            "output_file": _db_url.get("output_file") or _static_name_from_url(_cached_output_url),
             "parent_task_id": req.parent_task_id,
             "client_ip": request.client.host if request.client else None,
             "user_agent": request.headers.get("user-agent", "")[:300],
@@ -1368,7 +1524,7 @@ def face_blur(req: FaceBlurRequest, request: Request):
 
     try:
         with _task_slot():
-            return _face_blur_impl(task_id, req, request, cache_key=_ck)
+            return _face_blur_impl(task_id, req, request, cache_key=_ck, effective_params=effective_params)
     except HTTPException as exc:
         response = {"task_id": task_id, "status": "rejected", "error": str(exc.detail)}
         _insert_request({
@@ -1386,7 +1542,7 @@ def face_blur(req: FaceBlurRequest, request: Request):
         return JSONResponse(response, status_code=exc.status_code)
 
 
-def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cache_key: str = ""):
+def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cache_key: str = "", effective_params: dict | None = None):
     t0 = time.perf_counter()
     image_url = str(req.image_url)
     request_json = _request_record(req, request)
@@ -1394,9 +1550,14 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
     user_agent = request.headers.get("user-agent", "")[:300]
     attempts = 1
     max_retries = _get_int_setting("max_retries", MAX_RETRIES, 0, 10)
-    _global_minface = _get_blur_default("min_face_skip", 50)
-    _global_dot = _get_blur_default("dot_radius", 3)
-    _global_step = _get_blur_default("face_grid_step", 14)
+    params = effective_params or {
+        "score_threshold": req.score_threshold,
+        "expand_ratio": req.expand_ratio,
+        "min_face_skip": req.min_face_skip,
+        "dot_radius": req.dot_radius,
+        "face_grid_step": req.face_grid_step,
+        "grid_n": req.grid_n,
+    }
 
     log.info(f"[req] mode={req.mode}  url={image_url[:120]}...")
 
@@ -1446,22 +1607,22 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
     try:
         blur_params: dict = {}
         if req.mode == "landmark":
-            blur_params["dot_radius"] = req.dot_radius
+            blur_params["dot_radius"] = params["dot_radius"]
             blur_params["spacing"] = req.spacing
         elif req.mode == "landmark_whole_face":
-            blur_params["dot_radius"] = req.dot_radius
-            blur_params["spacing"] = req.spacing
-            blur_params["face_grid_step"] = req.face_grid_step
-            blur_params["grid_n"] = req.grid_n
+            blur_params["dot_radius"] = params["dot_radius"]
+            blur_params["spacing"] = req.spacing if "spacing" in req.model_fields_set else params["face_grid_step"]
+            blur_params["face_grid_step"] = params["face_grid_step"]
+            blur_params["grid_n"] = params["grid_n"]
         result, process_attempts, process_error = _run_with_retries(
             "process_image",
             lambda: process_image(
                 img_bytes,
                 mode=req.mode,
-                score_threshold=req.score_threshold,
-                expand_ratio=req.expand_ratio,
+                score_threshold=params["score_threshold"],
+                expand_ratio=params["expand_ratio"],
                 return_faces=True,
-                adaptive=True, min_face_skip=_global_minface,
+                adaptive=True, min_face_skip=params["min_face_skip"],
                 **blur_params,
             ),
             max_retries=max_retries,
@@ -1547,13 +1708,15 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             "request_json": request_json,
             "response_json": json.dumps(response, ensure_ascii=False),
         })
-        _cache_set(cache_key, response)
+        if cache_key:
+            _cache_set(cache_key, response)
         return response
 
     # 4. 写入静态目录
     out_name = f"{int(time.time())}_{uuid.uuid4().hex[:8]}.jpg"
     out_path = STATIC_DIR / out_name
     out_path.write_bytes(result["image_bytes"])
+    _invalidate_storage_stats()
     log.info(f"  saved {out_path}  ({len(result['image_bytes'])} bytes)")
 
     # 5. 生成 output_url
@@ -1571,6 +1734,7 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
         "mode": req.mode,
         "original_url": image_url,
         "output_url": output_url,
+        "output_file": out_name,
         "parent_task_id": req.parent_task_id or "",
         "size": len(result["image_bytes"]),
     }
@@ -1597,9 +1761,10 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
     })
 
     # L2: 写入 DB 持久缓存
-    _db_cache_set(cache_key, str(req.image_url), response["output_url"],
-                  out_name, req.mode)
-    _cache_set(cache_key, response)
+    if cache_key:
+        _db_cache_set(cache_key, str(req.image_url), response["output_url"],
+                      out_name, req.mode)
+        _cache_set(cache_key, response)
     return response
 
 
@@ -1648,7 +1813,7 @@ def admin_summary(
         cleanup = conn.execute(
             "SELECT * FROM cleanup_runs ORDER BY id DESC LIMIT 1"
         ).fetchone()
-    files, file_total = _static_files()
+    storage = _storage_stats()
     inflight = _inflight_read()
     return {
         "ok": True,
@@ -1679,8 +1844,8 @@ def admin_summary(
             "by_mode": by_mode,
         },
         "storage": {
-            "file_count": file_total,
-            "bytes": sum(f["size"] for f in files),
+            "file_count": storage["file_count"],
+            "bytes": storage["bytes"],
         },
         "settings": {
             "score_threshold": _get_blur_default("score_threshold", 0.52),
@@ -1775,7 +1940,9 @@ def admin_clear_cache(
         n = conn.execute("SELECT COUNT(*) FROM blur_cache").fetchone()[0]
         conn.execute("DELETE FROM blur_cache")
         conn.commit()
-    return {"ok": True, "cleared_l2": n, "note": "L1 (memory) cache persists until restart"}
+    l1_count = _cache_clear()
+    _bump_cache_epoch()
+    return {"ok": True, "cleared_l1": l1_count, "cleared_l2": n}
 
 
 
@@ -1827,6 +1994,7 @@ def admin_get_settings(
             "min_face_skip": _get_blur_default("min_face_skip", 50),
             "dot_radius": _get_blur_default("dot_radius", 3),
             "face_grid_step": _get_blur_default("face_grid_step", 14),
+            "grid_n": _get_blur_default("grid_n", 5),
             "inflight_tasks": inflight,
         },
     }
@@ -1842,7 +2010,13 @@ def admin_set_settings(
 ):
     _require_admin(request, authorization, x_admin_token, token)
     values = {k: v for k, v in payload.model_dump().items() if v is not None}
-    return {"ok": True, "saved": _set_settings(values)}
+    saved = _set_settings(values)
+    if any(key in values for key in ("score_threshold", "expand_ratio", "min_face_skip", "dot_radius", "face_grid_step", "grid_n")):
+        _cache_clear()
+        _bump_cache_epoch()
+        with _db() as conn:
+            conn.execute("DELETE FROM blur_cache")
+    return {"ok": True, "saved": saved}
 
 
 @app.get("/admin", response_class=HTMLResponse)
@@ -1981,7 +2155,7 @@ ADMIN_HTML = """
 
 <div class="tab-view" data-tab="settings" hidden>
     <section class="panel" style="margin-bottom:14px">
-      <div class="panel-head"><h2>⚙ 全局设置</h2><button class="btn primary" onclick="saveSettings()">保存设置</button> <button class="btn secondary" onclick="clearCache()">🗑 清空缓存</button> <button class="btn secondary" onclick="clearCache()">🗑 清空缓存</button></div>
+      <div class="panel-head"><h2>⚙ 全局设置</h2><button class="btn primary" onclick="saveSettings()">保存设置</button> <button class="btn secondary" onclick="clearCache()">🗑 清空缓存</button></div>
       <div class="settings" style="gap:14px">
         <div class="field" title="允许同时处理的最大并发请求数"><label>并行上限</label><input id="s-concurrency" type="number" min="1" max="128"/></div>
         <div class="field" title="请求失败后的最大重试次数"><label>重试次数</label><input id="s-retries" type="number" min="0" max="10"/></div>
@@ -2375,9 +2549,9 @@ ADMIN_HTML = """
       await loadGalleryPage();
     }
     async function clearCache(){
-      if(!confirm("确认清空所有 L2 打码缓存? L1 重启后自动清空")) return;
+      if(!confirm("确认清空所有打码缓存？")) return;
       const d = await api("/api/admin/clear-cache", {method:"POST"});
-      setStatus("已清空 " + (d.cleared_l2 || 0) + " 条 L2 缓存");
+      setStatus("已清空 L1 " + (d.cleared_l1 || 0) + " 条、L2 " + (d.cleared_l2 || 0) + " 条缓存");
     }
     async function saveSettings(){
       const body = {
