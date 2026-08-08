@@ -1803,11 +1803,12 @@ def admin_summary(
         ok = conn.execute("SELECT COUNT(*) FROM requests WHERE status='ok'").fetchone()[0]
         blocked = conn.execute("SELECT COUNT(*) FROM requests WHERE blocked=1").fetchone()[0]
         errors = conn.execute("SELECT COUNT(*) FROM requests WHERE status!='ok'").fetchone()[0]
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
         today = conn.execute(
-            "SELECT COUNT(*) FROM requests WHERE created_at >= datetime('now', '-24 hours')"
+            "SELECT COUNT(*) FROM requests WHERE created_at >= ?", (cutoff,)
         ).fetchone()[0]
         today_ok = conn.execute(
-            "SELECT COUNT(*) FROM requests WHERE status='ok' AND created_at >= datetime('now', '-24 hours')"
+            "SELECT COUNT(*) FROM requests WHERE status='ok' AND created_at >= ?", (cutoff,)
         ).fetchone()[0]
         retried = conn.execute("SELECT COUNT(*) FROM requests WHERE retried=1").fetchone()[0]
         avg_ms = conn.execute(
