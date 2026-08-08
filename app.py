@@ -483,8 +483,20 @@ def _task_row(row: sqlite3.Row | dict) -> dict:
 
 
 def _static_files(offset: int = 0, limit: int | None = None,
-                  include_task_id: bool = False) -> tuple[list[dict], int]:
+                  include_task_id: bool = False,
+                  parent_task_id: str | None = None) -> tuple[list[dict], int]:
     paths = sorted(STATIC_DIR.glob("*.jpg"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if parent_task_id:
+        try:
+            with _db() as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT output_file FROM requests WHERE parent_task_id=? AND output_file IS NOT NULL",
+                    (parent_task_id,),
+                ).fetchall()
+                allowed = {r[0] for r in rows}
+                paths = [p for p in paths if p.name in allowed]
+        except Exception:
+            pass
     total = len(paths)
     if limit is not None:
         paths = paths[offset:offset + limit]
@@ -1311,12 +1323,13 @@ def admin_files(
     request: Request,
     offset: int = Query(0, ge=0),
     limit: int = Query(60, ge=1, le=500),
+    parent_task_id: str | None = Query(default=None),
     authorization: str | None = Header(default=None),
     x_admin_token: str | None = Header(default=None),
     token: str | None = Query(default=None),
 ):
     _require_admin(request, authorization, x_admin_token, token)
-    items, total = _static_files(offset=offset, limit=limit, include_task_id=True)
+    items, total = _static_files(offset=offset, limit=limit, include_task_id=True, parent_task_id=parent_task_id)
     return {"ok": True, "items": items, "total": total, "offset": offset, "limit": limit, "has_more": offset + len(items) < total}
 
 
@@ -1599,6 +1612,7 @@ ADMIN_HTML = """
   <script>
     const tokenEl = document.getElementById('token');
     let activeTab = 'overview';
+    let activeParentSearch = '';
     let requestPage = 1;
     let requestPageSize = 20;
     let requestPageCount = 1;
@@ -1706,8 +1720,7 @@ ADMIN_HTML = """
     }
     async function loadRequests(){
       let url = '/api/admin/requests?offset=' + ((requestPage - 1) * requestPageSize) + '&limit=' + requestPageSize;
-      const q = document.getElementById('task-search').value.trim();
-      if(q && q.length !== 32) url += '&parent_task_id=' + encodeURIComponent(q);
+      if(activeParentSearch) url += '&parent_task_id=' + encodeURIComponent(activeParentSearch);
       const st = document.getElementById('status-filter').value;
       if(st) url += '&status=' + encodeURIComponent(st);
       const d = await api(url);
@@ -1748,7 +1761,9 @@ ADMIN_HTML = """
       await loadRequests();
     }
     async function loadFiles(){
-      const d = await api('/api/admin/files?offset=0&limit=10');
+      let fUrl = '/api/admin/files?offset=0&limit=10';
+      if(activeParentSearch) fUrl += '&parent_task_id=' + encodeURIComponent(activeParentSearch);
+      const d = await api(fUrl);
       document.getElementById('files').innerHTML = d.items.map(x => {
         const tid = x.task_id || '';
         const onclick = tid ? `onclick="showTaskDetail('${escapeHtml(tid)}')"` : '';
@@ -1798,8 +1813,8 @@ ADMIN_HTML = """
     function findTask(){
       const q = document.getElementById('task-search').value.trim();
       if(!q) return;
-      if(q.length === 32) showTaskDetail(q);
-      else { requestPage = 1; loadRequests(); }
+      if(q.length === 32){ activeParentSearch = ''; showTaskDetail(q); }
+      else { activeParentSearch = q; requestPage = 1; loadRequests(); loadFiles(); }
     }
     async function copyTaskId(){
       const taskId = document.getElementById('task-search').value.trim();
