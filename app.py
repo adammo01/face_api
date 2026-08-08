@@ -1395,7 +1395,7 @@ def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None =
     blur_params = {}
     if req.mode == "landmark_whole_face":
         blur_params.update({
-            "adaptive": True, "min_face_skip": req.min_face_skip or 50,
+            "adaptive": True, "min_face_skip": req.min_face_skip if req.min_face_skip is not None else 50,
             "dot_radius": req.dot_radius, "face_grid_step": req.face_grid_step,
             "grid_n": req.grid_n or 5, "spacing": req.face_grid_step,
         })
