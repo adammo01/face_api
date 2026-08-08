@@ -254,6 +254,19 @@ def _get_setting(key: str, default: str) -> str:
         return default
 
 
+def _get_blur_default(key: str, default):
+    """读取全局打码默认参数, 类型不匹配则回退默认值"""
+    try:
+        with _db() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        if row:
+            v = json.loads(row[0])
+            return v if type(v) == type(default) else default
+    except Exception:
+        pass
+    return default
+
+
 def _get_int_setting(key: str, default: int, min_value: int = 1, max_value: int = 100) -> int:
     try:
         value = int(float(_get_setting(key, str(default))))
@@ -1632,6 +1645,16 @@ def admin_get_settings(
             "max_retries": _get_int_setting("max_retries", MAX_RETRIES, 0, 10),
             "retry_backoff_seconds": _get_float_setting("retry_backoff_seconds", RETRY_BACKOFF_SECONDS, 0.0, 10.0),
             "image_ttl_hours": _get_int_setting("image_ttl_hours", IMAGE_TTL_HOURS, 1, 24 * 365),
+            "score_threshold": _get_blur_default("score_threshold", 0.52),
+            "expand_ratio": _get_blur_default("expand_ratio", 0.30),
+            "min_face_skip": _get_blur_default("min_face_skip", 50),
+            "dot_radius": _get_blur_default("dot_radius", 3),
+            "face_grid_step": _get_blur_default("face_grid_step", 14),
+            "score_threshold": _get_blur_default("score_threshold", 0.52),
+            "expand_ratio": _get_blur_default("expand_ratio", 0.30),
+            "min_face_skip": _get_blur_default("min_face_skip", 50),
+            "dot_radius": _get_blur_default("dot_radius", 3),
+            "face_grid_step": _get_blur_default("face_grid_step", 14),
             "inflight_tasks": inflight,
         },
     }
