@@ -1608,6 +1608,21 @@ def admin_files(
     return {"ok": True, "items": items, "total": total, "offset": offset, "limit": limit, "has_more": offset + len(items) < total}
 
 
+@app.post("/api/admin/clear-cache")
+def admin_clear_cache(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_admin_token: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    _require_admin(request, authorization, x_admin_token, token)
+    with _db() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM blur_cache").fetchone()[0]
+        conn.execute("DELETE FROM blur_cache")
+        conn.commit()
+    return {"ok": True, "cleared_l2": n, "note": "L1 (memory) cache persists until restart"}
+
+
 @app.post("/api/admin/cleanup")
 def admin_cleanup(
     request: Request,
@@ -1803,7 +1818,7 @@ ADMIN_HTML = """
 
 <div class="tab-view" data-tab="settings" hidden>
     <section class="panel" style="margin-bottom:14px">
-      <div class="panel-head"><h2>⚙ 全局设置</h2><button class="btn primary" onclick="saveSettings()">保存设置</button></div>
+      <div class="panel-head"><h2>⚙ 全局设置</h2><button class="btn primary" onclick="saveSettings()">保存设置</button> <button class="btn secondary" onclick="clearCache()">🗑 清空缓存</button></div>
       <div class="settings" style="gap:14px">
         <div class="field" title="允许同时处理的最大并发请求数"><label>并行上限</label><input id="s-concurrency" type="number" min="1" max="128"/></div>
         <div class="field" title="请求失败后的最大重试次数"><label>重试次数</label><input id="s-retries" type="number" min="0" max="10"/></div>
@@ -2164,6 +2179,11 @@ ADMIN_HTML = """
       galleryPageSize = Number(document.getElementById('gallery-page-size').value);
       galleryPage = 1;
       await loadGalleryPage();
+    }
+    async function clearCache(){
+      if(!confirm('确认清空所有 L2 打码缓存？\n(L1 内存缓存在重启后自动清空)')) return;
+      const d = await api('/api/admin/clear-cache', {method:'POST'});
+      setStatus('已清空 ' + (d.cleared_l2 || 0) + ' 条 L2 缓存');
     }
     async function saveSettings(){
       const body = {
