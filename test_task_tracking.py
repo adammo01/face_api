@@ -118,15 +118,12 @@ class TaskTrackingTests(unittest.TestCase):
         self.assertEqual(detail['request']['query']['source'], 'invalid-test')
 
     def test_concurrency_rejection_is_recorded_with_task_id(self):
-        with patch.object(self.module, '_get_int_setting', return_value=1):
-            self.module._INFLIGHT_TASKS = 1
-            try:
-                response = self.client.post(
-                    '/api/face_blur',
-                    json={'image_url': 'https://example.com/input.jpg', 'mode': 'solid'},
-                )
-            finally:
-                self.module._INFLIGHT_TASKS = 0
+        with patch.object(self.module, '_get_int_setting', return_value=1), \
+                patch.object(self.module, '_inflight_try_acquire', return_value=False):
+            response = self.client.post(
+                '/api/face_blur',
+                json={'image_url': 'https://example.com/input.jpg', 'mode': 'solid'},
+            )
 
         self.assertEqual(response.status_code, 429)
         task_id = response.json()['task_id']

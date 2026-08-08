@@ -1826,7 +1826,7 @@ ADMIN_HTML = """
       <button class="tab" data-tab="gallery" onclick="showGalleryTab()">图片库</button>
       <button class="tab" id="task-tab" data-tab="task" onclick="showTab('task')" hidden>任务详情</button>
       <button class="tab" data-tab="settings" onclick="showTab('settings'); loadSettingsTab();">⚙ 全局设置</button>
-    <a id="lab-link" href="/lab" class="tab" style="text-decoration:none" target="_blank">🧪 实验室</a>
+    <button class="tab" data-tab="lab" onclick="showLabTab()">🧪 实验室</button>
     </nav>
     <div class="task-search">
       <input id="task-search" type="search" placeholder="输入任务 ID 或父任务ID 定位" aria-label="任务 ID" />
@@ -1950,13 +1950,16 @@ ADMIN_HTML = """
         </div>
       </section>
     </div>
+    <div class="tab-view" data-tab="lab" hidden>
+      <section class="panel"><iframe id="lab-frame" title="打码实验室" style="display:block;width:100%;height:900px;border:0"></iframe></section>
+    </div>
   </main>
   <script>
     const tokenEl = document.getElementById('token');
     let activeTab = 'overview';
     let activeParentSearch = '';
     let requestPage = 1;
-    let requestPageSize = 20;
+    let requestPageSize = 10;
     let requestPageCount = 1;
     let galleryPage = 1;
     let galleryPageSize = 10;
@@ -2180,6 +2183,11 @@ ADMIN_HTML = """
       showTab('gallery');
       await loadGalleryPage();
     }
+    function showLabTab(){
+      const t = tokenEl.value.trim();
+      document.getElementById("lab-frame").src = "/lab?token=" + encodeURIComponent(t);
+      showTab("lab");
+    }
     async function loadGalleryPage(){
       const d = await api(`/api/admin/files?offset=${(galleryPage - 1) * galleryPageSize}&limit=${galleryPageSize}`);
       galleryPageCount = Math.max(1, Math.ceil(d.total / galleryPageSize));
@@ -2248,11 +2256,10 @@ ADMIN_HTML = """
         document.getElementById('s-minface').value = s.min_face_skip ?? 50;
         document.getElementById('s-dot').value = s.dot_radius ?? 3;
         document.getElementById('s-step').value = s.face_grid_step ?? 14;
-      } catch(e) {}
+      } catch(e) { setStatus(`全局设置加载失败: ${e.message}`); }
     }
 
     async function loadAll(){
-      try { const t = localStorage.getItem("token") || ""; document.getElementById("lab-link").href = "/lab?token=" + encodeURIComponent(t); } catch(e) {}
       try {
         await Promise.all([loadSummary(), loadRequests(), loadFiles()]);
         if(activeTab === 'gallery') await loadGalleryPage();

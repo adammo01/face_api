@@ -58,8 +58,7 @@ class AdminPageTests(unittest.TestCase):
         for size in (10, 20, 50, 100, 200):
             self.assertRegex(ADMIN_HTML, rf'<option value="{size}"')
         self.assertIn('let requestPageSize = 10;', ADMIN_HTML)
-        self.assertIn('offset=${(requestPage - 1) * requestPageSize}', ADMIN_HTML)
-        self.assertIn('limit=${requestPageSize}', ADMIN_HTML)
+        self.assertIn("'&limit=' + requestPageSize", ADMIN_HTML)
         self.assertIn('onclick="changeRequestPage(-1)"', ADMIN_HTML)
         self.assertIn('onclick="changeRequestPage(1)"', ADMIN_HTML)
         self.assertNotIn('/api/admin/requests?limit=80', ADMIN_HTML)
@@ -84,6 +83,11 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('id="task-request-json"', ADMIN_HTML)
         self.assertIn('id="task-response-json"', ADMIN_HTML)
         self.assertNotIn('target="_blank"', ADMIN_HTML)
+
+    def test_admin_token_is_forwarded_to_lab_and_lab_initializes_after_dom(self):
+        self.assertIn('function showLabTab()', ADMIN_HTML)
+        self.assertIn('lab-frame', ADMIN_HTML)
+        self.assertIn('window.addEventListener("DOMContentLoaded"', APP_SOURCE)
 
     def test_task_id_can_be_searched_and_copied(self):
         self.assertIn('id="task-search"', ADMIN_HTML)
