@@ -515,6 +515,7 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
         # 极小人脸跳过打码 (原图直发已验证能过审, 保留远景细节)
         min_face_skip = int(blur_params.get("min_face_skip", 0))
 
+        blurred_faces = []
         for face in faces_list:
             # 脸宽 < min_face_skip 直接跳过 (不打码, 原样保留远景小脸细节)
             # 用原始脸宽 face.w 判断 (expand 后的 bw 会放大, 不准确)
@@ -572,6 +573,7 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
                 )
             img[by:by + bh, bx:bx + bw] = region
             face.landmarks = landmarks or {}
+            blurred_faces.append(face)
     else:
         faces = detector.detect_multiscale(img)
         blur_fn = BLUR_MODES[mode]
@@ -589,7 +591,7 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
     elapsed_ms = (time.perf_counter() - t0) * 1000
     # D 修复: landmark 模式 faces 是 dict 列表，普通模式是 FaceBox 列表
     if mode in ("landmark", "landmark_whole_face"):
-        _face_count = len(faces_list)
+        _face_count = len(blurred_faces)
     else:
         _face_count = len(faces)
     result = {
