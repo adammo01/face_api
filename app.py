@@ -658,8 +658,87 @@ def _dl_session():
 
 def _download(url: str, max_bytes: int = MAX_IMAGE_BYTES,
               timeout: int = DOWNLOAD_TIMEOUT) -> bytes:
-    """下载 URL, 限制最大字节数 (复用连接池)"""
+    """下载 URL, 大图分块并发 (4 线程), 小图单连接."""
     _assert_public_url(url)
+    sess = _dl_session()
+    ua = {"User-Agent": "faceblur-api/1.0"}
+
+    # 探测: HEAD 拿文件大小, 不支持 Range 就走单线程
+    total_size = 0
+    accept_ranges = False
+    try:
+        with sess.head(url, timeout=(5, 10), headers=ua) as hdr:
+            hdr.raise_for_status()
+            total_size = int(hdr.headers.get("Content-Length", 0))
+            accept_ranges = hdr.headers.get("Accept-Ranges", "") == "bytes"
+    except Exception:
+        pass
+
+    # 小文件 / 不支持 Range / HEAD 失败 → 单线程
+    CHUNK_THRESHOLD = 1_000_000  # 1 MB
+    if total_size < CHUNK_THRESHOLD or not accept_ranges:
+        with sess.get(url, timeout=(5, timeout), stream=True, headers=ua) as resp:
+            resp.raise_for_status()
+            data = b""
+            for chunk in resp.iter_content(chunk_size=65536):
+                if not chunk:
+                    break
+                data += chunk
+                if len(data) > max_bytes:
+                    raise HTTPException(413, f"image too large (> {max_bytes} bytes)")
+        return data
+
+    if total_size > max_bytes:
+        raise HTTPException(413, f"image too large ({total_size} > {max_bytes} bytes)")
+
+    # 大文件: 4 线程分块并发下载
+    NUM = 4
+    chunk_size = (total_size + NUM - 1) // NUM
+    results = [None] * NUM
+
+    def _dl_chunk(idx, start, end):
+        try:
+            with sess.get(url, timeout=(5, timeout), stream=True,
+                          headers={**ua, "Range": f"bytes={start}-{end}"}) as resp:
+                if resp.status_code not in (200, 206):
+                    resp.raise_for_status()
+                buf = b""
+                for p in resp.iter_content(chunk_size=65536):
+                    if not p:
+                        break
+                    buf += p
+                results[idx] = buf
+        except Exception as e:
+            results[idx] = e
+
+    threads = []
+    for i in range(NUM):
+        start = i * chunk_size
+        end = min(start + chunk_size - 1, total_size - 1)
+        t = threading.Thread(target=_dl_chunk, args=(i, start, end), daemon=True)
+        t.start()
+        threads.append(t)
+    for t in threads:
+        t.join()
+
+    # 组装并校验 (任一线程失败或尺寸不符则降级重下)
+    data = b""
+    for i, part in enumerate(results):
+        if isinstance(part, Exception):
+            log.warning("chunked download failed chunk %d: %s, fallback single", i, part)
+            return _download_fallback(url, max_bytes, timeout)
+        expected = min(chunk_size, total_size - i * chunk_size)
+        if len(part) != expected:
+            log.warning("chunked download chunk %d short (%d != %d), fallback single",
+                        i, len(part), expected)
+            return _download_fallback(url, max_bytes, timeout)
+        data += part
+    return data
+
+
+def _download_fallback(url: str, max_bytes: int = MAX_IMAGE_BYTES,
+                       timeout: int = DOWNLOAD_TIMEOUT) -> bytes:
+    """单连接兜底下载 (无 HEAD/Range)."""
     sess = _dl_session()
     with sess.get(url, timeout=(5, timeout), stream=True,
                   headers={"User-Agent": "faceblur-api/1.0"}) as resp:
