@@ -720,12 +720,14 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     except json.JSONDecodeError:
         body = raw.decode("utf-8", errors="replace")
     error = "request validation failed"
+    parent_task_id = body.get("parent_task_id") if isinstance(body, dict) else None
     response = {"task_id": task_id, "status": "validation_error", "error": error, "errors": exc.errors()}
     _insert_request({
         "task_id": task_id,
         "status": "validation_error",
         "mode": body.get("mode") if isinstance(body, dict) else None,
         "image_url": body.get("image_url") if isinstance(body, dict) else None,
+        "parent_task_id": parent_task_id,
         "error": error,
         "client_ip": request.client.host if request.client else None,
         "user_agent": request.headers.get("user-agent", "")[:300],
