@@ -928,14 +928,31 @@ def face_blur(req: FaceBlurRequest, request: Request):
     _cached = _cache_get(_ck)
     if _cached is not None:
         log.info("[cache] L1 hit")
-        return {**_cached, "task_id": task_id, "parent_task_id": req.parent_task_id or ""}
+        r = {**_cached, "task_id": task_id, "parent_task_id": req.parent_task_id or ""}
+        _insert_request({
+            "task_id": task_id,
+            "status": "ok",
+            "mode": req.mode,
+            "blocked": 1,
+            "face_count": _cached.get("face_count", -1),
+            "elapsed_ms": 0,
+            "process_ms": 0,
+            "image_url": str(req.image_url),
+            "output_url": _cached.get("output_url", ""),
+            "parent_task_id": req.parent_task_id,
+            "client_ip": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent", "")[:300],
+            "request_json": _raw_request_record(request, req.model_dump(mode="json")),
+            "response_json": json.dumps(r, ensure_ascii=False),
+        })
+        return r
 
     # L2: DB 持久缓存
     _db_url = _db_cache_get(_ck)
     if _db_url is not None:
         # 构造与正常打码一致的响应
         log.info("[cache] L2 hit")
-        return {
+        r = {
             "task_id": task_id,
             "ok": True,
             "blocked": True,
@@ -947,6 +964,23 @@ def face_blur(req: FaceBlurRequest, request: Request):
             "parent_task_id": req.parent_task_id or "",
             "cached": True,
         }
+        _insert_request({
+            "task_id": task_id,
+            "status": "ok",
+            "mode": req.mode,
+            "blocked": 1,
+            "face_count": -1,
+            "elapsed_ms": 0,
+            "process_ms": 0,
+            "image_url": str(req.image_url),
+            "output_url": _db_url,
+            "parent_task_id": req.parent_task_id,
+            "client_ip": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent", "")[:300],
+            "request_json": _raw_request_record(request, req.model_dump(mode="json")),
+            "response_json": json.dumps(r, ensure_ascii=False),
+        })
+        return r
 
     try:
         with _task_slot():
