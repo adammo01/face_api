@@ -949,7 +949,11 @@ def lab_page(request: Request):
     .lab-url { display:flex; gap:8px; margin-bottom:12px; }
     .lab-url input { flex:1; padding:10px 12px; border:1px solid var(--line); border-radius:6px; }
     .lab-preview { display:grid; grid-template-columns: 1fr 1fr; gap:8px; min-height:200px; }
-    .lab-preview img { width:100%; border-radius:8px; background:var(--bg-card); }
+    .lab-preview img { width:100%; border-radius:8px; background:var(--bg-card); cursor:zoom-in; }
+    .lab-image-modal { position:fixed; inset:0; z-index:30; display:grid; place-items:center; padding:24px; background:rgba(0,0,0,.82); }
+    .lab-image-modal[hidden] { display:none; }
+    .lab-image-modal img { max-width:96vw; max-height:90vh; width:auto; object-fit:contain; background:#111; }
+    .lab-image-modal-close { position:fixed; top:12px; right:18px; border:0; background:transparent; color:white; font-size:32px; cursor:pointer; }
     .lab-preview .label { font-size:12px; color:var(--text-dim); text-align:center; margin-top:4px; }
     .lab-params { background:var(--bg-card); padding:16px; border-radius:8px; border:1px solid var(--line); }
     .lab-params h3 { margin:0 0 12px; font-size:16px; }
@@ -979,8 +983,8 @@ def lab_page(request: Request):
             <input id="lab-url" type="url" placeholder="或粘贴图片 URL..." onkeydown="if(event.key==='Enter')labTest()" />
           </div>
           <div class="lab-preview" id="lab-preview">
-            <div><img id="lab-before" style="display:none" /><div class="label">原图</div></div>
-            <div><img id="lab-after" style="display:none" /><div class="label">打码结果<span id="lab-face-info"></span></div></div>
+            <div><img id="lab-before" style="display:none" onclick="labOpenPreview(this)" /><div class="label">原图</div></div>
+            <div><img id="lab-after" style="display:none" onclick="labOpenPreview(this)" /><div class="label">打码结果<span id="lab-face-info"></span></div></div>
           </div>
         </div>
         <div class="lab-params">
@@ -1008,6 +1012,10 @@ def lab_page(request: Request):
           <p id="lab-status" style="font-size:13px;color:var(--text-dim);margin-top:10px"></p>
         </div>
       </div>
+    </div>
+    <div class="lab-image-modal" id="lab-image-modal" hidden onclick="labClosePreview(event)">
+      <button class="lab-image-modal-close" type="button" aria-label="关闭图片预览" onclick="labClosePreview()">&times;</button>
+      <img id="lab-image-modal-content" alt="实验室图片大图预览" />
     </div>
 <script>
 const BASE = window.location.origin;
@@ -1107,6 +1115,19 @@ async function labSyncGlobal(){
 function labStepChanged(){
   document.getElementById("lab-step").value = document.getElementById("lab-step").value;
 }
+function labOpenPreview(image){
+  if(!image || !image.src) return;
+  const modal = document.getElementById("lab-image-modal");
+  const preview = document.getElementById("lab-image-modal-content");
+  preview.src = image.src;
+  preview.alt = image.alt || "实验室图片大图预览";
+  modal.hidden = false;
+}
+function labClosePreview(event){
+  if(event && event.target !== event.currentTarget) return;
+  document.getElementById("lab-image-modal").hidden = true;
+  document.getElementById("lab-image-modal-content").src = "";
+}
 // 页面内容在 head 之后才创建，所有 DOM 绑定必须延后到 DOMContentLoaded。
 window.addEventListener("DOMContentLoaded", () => {
   const drop = document.getElementById("lab-drop");
@@ -1124,6 +1145,7 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   }
   labToggleMode();
+  document.addEventListener("keydown", event => { if(event.key === "Escape") labClosePreview(); });
 });
 </script>
 <input type="hidden" id="lab-base64" />
@@ -2234,7 +2256,9 @@ ADMIN_HTML = """
       showTab("lab");
     }
     async function loadGalleryPage(){
-      const d = await api(`/api/admin/files?offset=${(galleryPage - 1) * galleryPageSize}&limit=${galleryPageSize}`);
+      let url = `/api/admin/files?offset=${(galleryPage - 1) * galleryPageSize}&limit=${galleryPageSize}`;
+      if(activeParentSearch) url += '&parent_task_id=' + encodeURIComponent(activeParentSearch);
+      const d = await api(url);
       galleryPageCount = Math.max(1, Math.ceil(d.total / galleryPageSize));
       if(galleryPage > galleryPageCount){ galleryPage = galleryPageCount; return loadGalleryPage(); }
       document.getElementById('gallery-files').innerHTML = d.items.map(x => {

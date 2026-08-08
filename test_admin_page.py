@@ -39,6 +39,7 @@ class AdminPageTests(unittest.TestCase):
     def test_gallery_requests_only_the_selected_page(self):
         self.assertIn('offset=${(galleryPage - 1) * galleryPageSize}', ADMIN_HTML)
         self.assertIn('limit=${galleryPageSize}', ADMIN_HTML)
+        self.assertIn("if(activeParentSearch) url += '&parent_task_id=' + encodeURIComponent(activeParentSearch);", ADMIN_HTML)
         self.assertIn('galleryPage = 1;', ADMIN_HTML)
         self.assertNotIn('const fileLimit = 60;', ADMIN_HTML)
 
@@ -57,7 +58,7 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('id="request-page-size"', ADMIN_HTML)
         for size in (10, 20, 50, 100, 200):
             self.assertRegex(ADMIN_HTML, rf'<option value="{size}"')
-        self.assertIn('let requestPageSize = 10;', ADMIN_HTML)
+        self.assertIn('let requestPageSize = 20;', ADMIN_HTML)
         self.assertIn("'&limit=' + requestPageSize", ADMIN_HTML)
         self.assertIn('onclick="changeRequestPage(-1)"', ADMIN_HTML)
         self.assertIn('onclick="changeRequestPage(1)"', ADMIN_HTML)
@@ -88,6 +89,12 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('function showLabTab()', ADMIN_HTML)
         self.assertIn('lab-frame', ADMIN_HTML)
         self.assertIn('window.addEventListener("DOMContentLoaded"', APP_SOURCE)
+
+    def test_lab_images_open_in_an_enlarged_preview(self):
+        self.assertIn('onclick="labOpenPreview(this)"', APP_SOURCE)
+        self.assertIn('id="lab-image-modal"', APP_SOURCE)
+        self.assertIn('function labOpenPreview(image)', APP_SOURCE)
+        self.assertIn('if(event.key === "Escape") labClosePreview();', APP_SOURCE)
 
     def test_task_id_can_be_searched_and_copied(self):
         self.assertIn('id="task-search"', ADMIN_HTML)
