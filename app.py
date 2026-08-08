@@ -1467,7 +1467,7 @@ def face_blur(req: FaceBlurRequest, request: Request):
             "task_id": task_id,
             "status": "ok",
             "mode": req.mode,
-            "blocked": 1,
+            "blocked": _cached.get("blocked", 1),
             "face_count": _cached.get("face_count", -1),
             "elapsed_ms": 0,
             "process_ms": 0,
