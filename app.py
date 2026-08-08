@@ -1798,7 +1798,7 @@ ADMIN_HTML = """
     .files { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 14px; }
     .gallery-files { grid-template-columns: repeat(4, minmax(0, 1fr)); }
     .file { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: white; }
-    .file img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #eee; }
+    .file img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #eee; cursor: zoom-in; }
     .file div { padding: 8px; color: var(--muted); font-family: "Microsoft YaHei", Arial, sans-serif; font-size: 12px; word-break: break-all; }
     .status { margin: 12px 0; color: var(--muted); font-family: "Microsoft YaHei", Arial, sans-serif; }
     .gallery-tools, .request-tools, .task-search, .pager { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -1818,11 +1818,15 @@ ADMIN_HTML = """
     .task-images { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
     .image-preview { border: 1px solid var(--line); background: white; }
     .image-preview h3, .json-block h3 { margin: 0; padding: 11px 13px; border-bottom: 1px solid var(--line); font: 600 13px "Microsoft YaHei", Arial, sans-serif; }
-    .image-preview img { display: block; width: 100%; height: 320px; object-fit: contain; background: #efede7; }
+    .image-preview img { display: block; width: 100%; height: 320px; object-fit: contain; background: #efede7; cursor: zoom-in; }
     .image-empty { display: grid; height: 320px; place-items: center; color: var(--muted); }
     .task-json { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
     .json-block { min-width: 0; border: 1px solid var(--line); background: white; }
     .json-block pre { min-height: 220px; max-height: 520px; margin: 0; padding: 13px; overflow: auto; background: #f7f4ec; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.55; }
+    .image-modal { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 28px; background: rgba(0, 0, 0, .78); }
+    .image-modal[hidden] { display: none; }
+    .image-modal img { display: block; max-width: min(96vw, 1800px); max-height: 90vh; object-fit: contain; background: #111; }
+    .image-modal-close { position: fixed; top: 14px; right: 18px; border: 0; background: transparent; color: white; font-size: 32px; line-height: 1; cursor: pointer; }
     @media (max-width: 860px) { .grid, .split, .settings, .task-facts, .task-images, .task-json { grid-template-columns: 1fr; } header, .task-heading { align-items: stretch; flex-direction: column; } .auth input, .task-search input { width: 100%; } .files, .gallery-files { grid-template-columns: 1fr; } table { min-width: 760px; } .panel { overflow-x: auto; } }
   </style>
 </head>
@@ -1975,6 +1979,10 @@ ADMIN_HTML = """
       <section class="panel"><iframe id="lab-frame" title="打码实验室" style="display:block;width:100%;height:900px;border:0"></iframe></section>
     </div>
   </main>
+  <div class="image-modal" id="image-modal" hidden onclick="closeImagePreview(event)">
+    <button class="image-modal-close" type="button" aria-label="关闭图片预览" onclick="closeImagePreview()">&times;</button>
+    <img id="image-modal-content" alt="图片大图预览" />
+  </div>
   <script>
     const tokenEl = document.getElementById('token');
     let activeTab = 'overview';
@@ -2088,8 +2096,21 @@ ADMIN_HTML = """
       const meta = id + "-size";
       const sizeText = sizeBytes ? ` \xb7 ${fmtBytes(sizeBytes)}` : "";
       return `<div class="image-preview"><h3><span>${label}</span><span class="img-meta" id="${meta}">${sizeText}</span></h3>${url
-        ? `<img id="${id}" src="${escapeHtml(url)}" alt="${label}" loading="lazy" onload="showImgSize(this)" data-size="${sizeBytes || 0}" />`
+        ? `<img id="${id}" src="${escapeHtml(url)}" alt="${escapeHtml(label)}" loading="lazy" onload="showImgSize(this)" onclick="openImagePreview(this.src, this.alt)" data-size="${sizeBytes || 0}" />`
         : `<div class="image-empty" id="${id}">无可预览图片</div>`}</div>`;
+    }
+    function openImagePreview(url, label){
+      const modal = document.getElementById('image-modal');
+      const image = document.getElementById('image-modal-content');
+      image.src = url;
+      image.alt = label || '图片大图预览';
+      modal.hidden = false;
+    }
+    function closeImagePreview(event){
+      if(event && event.target !== event.currentTarget) return;
+      const modal = document.getElementById('image-modal');
+      modal.hidden = true;
+      document.getElementById('image-modal-content').src = '';
     }
     async function loadRequests(){
       let url = '/api/admin/requests?offset=' + ((requestPage - 1) * requestPageSize) + '&limit=' + requestPageSize;
@@ -2142,7 +2163,7 @@ ADMIN_HTML = """
         const onclick = tid ? `onclick="showTaskDetail('${escapeHtml(tid)}')"` : '';
         const style = tid ? 'style="cursor:pointer"' : '';
         const title = tid ? 'title="点击查看任务详情"' : '';
-        return `<div class="file" ${onclick} ${style} ${title}><img src="${x.url}" loading="lazy" /><div>${x.name}<br>${fmtBytes(x.size)}</div></div>`;
+        return `<div class="file" ${onclick} ${style} ${title}><img src="${x.url}" loading="lazy" alt="${escapeHtml(x.name)}" onclick="event.stopPropagation();openImagePreview(this.src, this.alt)" /><div>${x.name}<br>${fmtBytes(x.size)}</div></div>`;
       }).join('') || '<div class="status">暂无图片</div>';
     }
     async function showTaskDetail(taskId){
@@ -2221,7 +2242,7 @@ ADMIN_HTML = """
         const onclick = tid ? `onclick="showTaskDetail('${escapeHtml(tid)}')"` : '';
         const style = tid ? 'style="cursor:pointer"' : '';
         const title = tid ? 'title="点击查看任务详情"' : '';
-        return `<div class="file" ${onclick} ${style} ${title}><img src="${x.url}" loading="lazy" /><div>${x.name}<br>${fmtBytes(x.size)}</div></div>`;
+        return `<div class="file" ${onclick} ${style} ${title}><img src="${x.url}" loading="lazy" alt="${escapeHtml(x.name)}" onclick="event.stopPropagation();openImagePreview(this.src, this.alt)" /><div>${x.name}<br>${fmtBytes(x.size)}</div></div>`;
       }).join('') || '<div class="status">暂无图片</div>';
       document.getElementById('gallery-page-info').textContent = `第 ${galleryPage} / ${galleryPageCount} 页，共 ${d.total} 张`;
       document.getElementById('gallery-prev').disabled = galleryPage <= 1;
@@ -2298,6 +2319,7 @@ ADMIN_HTML = """
     tokenEl.addEventListener('input', () => { localStorage.setItem('faceblur_admin_token', tokenEl.value.trim()); });
     tokenEl.addEventListener('change', () => { persistTokenAndReload(); });
     tokenEl.addEventListener('keydown', event => { if(event.key === 'Enter'){ event.preventDefault(); persistTokenAndReload(); } });
+    document.addEventListener('keydown', event => { if(event.key === 'Escape') closeImagePreview(); });
     loadAll().then(() => {
       const match = location.hash.match(/^#task=(.+)$/);
       if(match) showTaskDetail(decodeURIComponent(match[1]));
