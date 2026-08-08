@@ -1535,6 +1535,14 @@ def admin_summary(
             "file_count": file_total,
             "bytes": sum(f["size"] for f in files),
         },
+        "settings": {
+            "score_threshold": _get_blur_default("score_threshold", 0.52),
+            "expand_ratio": _get_blur_default("expand_ratio", 0.30),
+            "min_face_skip": _get_blur_default("min_face_skip", 50),
+            "dot_radius": _get_blur_default("dot_radius", 3),
+            "face_grid_step": _get_blur_default("face_grid_step", 14),
+            "grid_n": _get_blur_default("grid_n", 5),
+        },
         "last_cleanup": dict(cleanup) if cleanup else None,
     }
 
