@@ -260,6 +260,11 @@ def _init_db() -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_blur_cache_expires ON blur_cache(expires_at)"
         )
+        # Migration: add face_count column (safe to run repeatedly)
+        try:
+            conn.execute("ALTER TABLE blur_cache ADD COLUMN face_count INTEGER DEFAULT 0")
+        except Exception:
+            pass
 
 
 def _get_setting(key: str, default: str) -> str:
@@ -947,7 +952,7 @@ def _db_cache_get(cache_key: str):
     try:
         with _db() as conn:
             row = conn.execute(
-                "SELECT output_url, output_file, expires_at FROM blur_cache WHERE cache_key=?",
+                "SELECT output_url, output_file, face_count, expires_at FROM blur_cache WHERE cache_key=?",
                 (cache_key,),
             ).fetchone()
         if row is None:
@@ -960,14 +965,15 @@ def _db_cache_get(cache_key: str):
         if not out_path.exists():
             _db_cache_del(cache_key)
             return None
-        return {"output_url": row["output_url"], "output_file": row["output_file"]}
+        return {"output_url": row["output_url"], "output_file": row["output_file"],
+                "face_count": row["face_count"] if row["face_count"] is not None else 0}
     except Exception as e:
         log.warning("db_cache_get failed: %s", e)
         return None
 
 
 def _db_cache_set(cache_key: str, image_url: str, output_url: str,
-                  output_file: str, mode: str):
+                  output_file: str, mode: str, face_count: int = 0):
     """写入 L2 缓存"""
     try:
         now = _utc_now()
@@ -976,9 +982,9 @@ def _db_cache_set(cache_key: str, image_url: str, output_url: str,
         with _db() as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO blur_cache
-                   (cache_key, image_url, output_url, output_file, mode, created_at, expires_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (cache_key, image_url, output_url, output_file, mode, now, expires),
+                   (cache_key, image_url, output_url, output_file, mode, face_count, created_at, expires_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (cache_key, image_url, output_url, output_file, mode, face_count, now, expires),
             )
     except Exception as e:
         log.warning("db_cache_set failed: %s", e)
@@ -1490,11 +1496,12 @@ def face_blur(req: FaceBlurRequest, request: Request):
         # 构造与正常打码一致的响应
         log.info("[cache] L2 hit")
         _cached_output_url = _db_url["output_url"]
+        _db_face_count = _db_url.get("face_count", 0)
         r = {
             "task_id": task_id,
             "ok": True,
-            "blocked": True,
-            "face_count": -1,
+            "blocked": _db_face_count > 0,
+            "face_count": _db_face_count,
             "elapsed_ms": 0,
             "mode": req.mode,
             "output_url": _cached_output_url,
@@ -1506,8 +1513,8 @@ def face_blur(req: FaceBlurRequest, request: Request):
             "task_id": task_id,
             "status": "ok",
             "mode": req.mode,
-            "blocked": 1,
-            "face_count": -1,
+            "blocked": 1 if _db_face_count > 0 else 0,
+            "face_count": _db_face_count,
             "elapsed_ms": 0,
             "process_ms": 0,
             "image_url": str(req.image_url),
@@ -1762,7 +1769,7 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
     # L2: 写入 DB 持久缓存
     if cache_key:
         _db_cache_set(cache_key, str(req.image_url), response["output_url"],
-                      out_name, req.mode)
+                      out_name, req.mode, face_count)
         _cache_set(cache_key, response)
     return response
 
