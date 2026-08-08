@@ -1,6 +1,7 @@
 # face_blur API · 拓飞云版对接文档
 
 > 当前正式环境:拓飞云 `36.133.106.162`(Ubuntu 24.04.4 LTS),通过 Cloudflare Tunnel 暴露为 `https://api.juziapi.cc.cd`。本文档面向**直接对接方**,只讲怎么调,不涉及部署。
+> 管理后台: `https://api.juziapi.cc.cd/admin`（仅管理员使用,不属于客户 API）
 
 ## 1. 接口地址
 

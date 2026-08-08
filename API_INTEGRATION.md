@@ -1,7 +1,7 @@
 # face_blur API · 对接文档
 
 > 单文件服务:仅做人脸打码。输入图片 URL,返回打码后图片的公网 URL;若图中**未检测到人脸**,**直接返回原 URL**(零成本、不下载/不上传)。
-> 最新更新:2026-08-07 (新增 parent_task_id 批次标记、图片尺寸展示、Admin 增强)
+> 最新更新:2026-08-08 (新增管理后台任务详情、实验室、图片分页与点击放大预览)
 
 ## 0. 当前线上地址(2026-08-06)
 
@@ -12,7 +12,7 @@
 | **Cloudflare Workers + Container**（推荐） | `https://api.vpsmo.cc.cd` | 通过 `wrangler secret` 注入（见 §5） |
 | SystemD + cloudflared（拓飞云 36.133.106.162） | `https://api.juziapi.cc.cd` | 通过 `FACE_BLUR_ADMIN_TOKEN` 环境变量 |
 
-两个域名都接入了 `/admin` HTML 后台(同一份 ADMIN_HTML)。
+拓飞云域名已接入完整 `/admin` HTML 后台；Cloudflare Worker 入口主要用于 API、D1/R2 记录与文件访问，管理后台页面需以实际 Worker 版本为准。
 
 **鉴权 token 速查**(完整说明见 §5):
 
@@ -155,7 +155,7 @@ curl -H "X-Admin-Token: <ADMIN_TOKEN>" \
   "https://api.vpsmo.cc.cd/api/admin/requests?parent_task_id=workflow-123&limit=50"
 ```
 
-`limit` 默认 10 / 上限 200,`offset` 默认 0。返回 `{items:[...], total, offset, limit}`。
+`limit` 接口默认 10 / 上限 200,`offset` 默认 0。管理后台的请求记录页面默认每页 20 条,可切换 10/20/50/100/200。返回 `{items:[...], total, offset, limit}`。
 
 ### `GET /healthz`
 
