@@ -551,15 +551,11 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
             region = img[by:by + bh, bx:bx + bw]
             if mode == "landmark_whole_face":
                 # 自适应密度: 小脸(远景)用更大的 step + 更小的点, 大脸保持默认
-                # adaptive_keep_step=True 时: 密度(step)不变, 只按比例缩小红点
+                # 三层分段硬切: L1小脸 / L2中脸(密度增强) / L3大脸(原方案)
                 if blur_params.get("adaptive", False):
-                    if blur_params.get("adaptive_keep_step", False):
-                        f_step = face_grid_step  # 密度不变
-                    else:
-                        f_step = int(np.clip(round(14.0 * (bw / 200.0) ** -0.5), 10, 32))
-                    # 红点超线性缩小: dot=3*(bw/200)^1.5
-                    # 小脸(<100px) → 1px (比大脸 3px 小 3 倍); 200px 大脸 → 3px
-                    f_dot = int(np.clip(round(3.0 * (bw / 200.0) ** 1.5), 1, 3))
+                    if bw < 100:        f_step, f_dot = 20, 1
+                    elif bw < 200:      f_step, f_dot = 12, 2
+                    else:               f_step, f_dot = 14, 3
                 else:
                     f_step, f_dot = face_grid_step, dot_radius
                 region = _apply_landmark_whole_face_with_landmarks(
