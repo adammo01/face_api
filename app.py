@@ -2077,6 +2077,9 @@ ADMIN_HTML = """
     .btn.secondary { background: transparent; color: var(--ink); border-color: var(--line); }
     .btn.danger { background: var(--warn); border-color: var(--warn); }
     .btn:disabled { cursor: not-allowed; opacity: .45; }
+    [data-theme="dark"] .btn { background: #1a1a1a; color: #fff; }
+    [data-theme="dark"] .btn.secondary { background: #333; color: #e0e0e0; }
+    [data-theme="dark"] .btn.danger { background: #c0392b; }
     .tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
     .tab { border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--muted); padding: 10px 16px; cursor: pointer; }
     .tab.active { border-bottom-color: var(--accent); color: var(--ink); font-weight: 700; }
