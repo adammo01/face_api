@@ -1404,11 +1404,24 @@ function labOpenPreview(image){
   const preview = document.getElementById("lab-image-modal-content");
   preview.src = image.src;
   preview.alt = image.alt || "实验室图片大图预览";
+  preview.style.transform = 'scale(1)';
   modal.hidden = false;
+  let labZoom = 1;
+  modal._labZoomHandler = function(e){
+    e.preventDefault();
+    labZoom += e.deltaY < 0 ? 0.1 : -0.1;
+    labZoom = Math.min(5, Math.max(0.3, labZoom));
+    preview.style.transform = 'scale(' + labZoom + ')';
+    preview.style.transition = 'transform .1s ease';
+  };
+  modal.addEventListener('wheel', modal._labZoomHandler, {passive:false});
 }
 function labClosePreview(event){
   if(event && event.target !== event.currentTarget) return;
-  document.getElementById("lab-image-modal").hidden = true;
+  const modal = document.getElementById("lab-image-modal");
+  modal.hidden = true;
+  modal.removeEventListener('wheel', modal._labZoomHandler);
+  delete modal._labZoomHandler;
   document.getElementById("lab-image-modal-content").src = "";
 }
 // 页面内容在 head 之后才创建，所有 DOM 绑定必须延后到 DOMContentLoaded。
@@ -2185,6 +2198,8 @@ ADMIN_HTML = """
     .label { color: var(--muted); font-size: 13px; }
     .metric { margin-top: 8px; font-size: 30px; font-weight: 700; }
     .split { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(360px, 1fr); gap: 18px; }
+    .split .files { overflow-y: auto; max-height: 70vh; }
+    .split .file img { max-height: 160px; }
     .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; box-shadow: var(--shadow); }
     .panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
     .settings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 14px 16px; align-items: end; }
@@ -2522,12 +2537,24 @@ ADMIN_HTML = """
       const image = document.getElementById('image-modal-content');
       image.src = url;
       image.alt = label || '图片大图预览';
+      image.style.transform = 'scale(1)';
       modal.hidden = false;
+      let scale = 1;
+      modal._zoomHandler = function(e){
+        e.preventDefault();
+        scale += e.deltaY < 0 ? 0.1 : -0.1;
+        scale = Math.min(5, Math.max(0.3, scale));
+        image.style.transform = 'scale(' + scale + ')';
+        image.style.transition = 'transform .1s ease';
+      };
+      modal.addEventListener('wheel', modal._zoomHandler, {passive:false});
     }
     function closeImagePreview(event){
       if(event && event.target !== event.currentTarget) return;
       const modal = document.getElementById('image-modal');
       modal.hidden = true;
+      modal.removeEventListener('wheel', modal._zoomHandler);
+      delete modal._zoomHandler;
       document.getElementById('image-modal-content').src = '';
     }
     async function loadRequests(){
