@@ -1116,7 +1116,7 @@ def lab_page(request: Request):
     .status-text { font-size:13px; color:var(--muted); margin-top:10px; line-height:1.5; padding:10px 14px; background:var(--bg); border-radius:8px; }
     .lab-image-modal { position:fixed; inset:0; z-index:30; display:grid; place-items:center; padding:24px; background:rgba(0,0,0,.88); backdrop-filter:blur(4px); }
     .lab-image-modal[hidden] { display:none; }
-    .lab-image-modal img { max-width:94vw; max-height:88vh; border-radius:12px; box-shadow:0 8px 40px rgba(0,0,0,0.4); }
+    .lab-image-modal img { max-width:94vw; max-height:88vh; border-radius:12px; box-shadow:0 8px 40px rgba(0,0,0,0.4); transform-origin: center center; touch-action: none; }
     .lab-image-modal-close { position:fixed; top:16px; right:20px; border:0; background:rgba(255,255,255,0.12); color:white; width:40px; height:40px; border-radius:8px; font-size:22px; cursor:pointer; transition:background .15s; }
     .lab-image-modal-close:hover { background:rgba(255,255,255,0.22); }
     @media (max-width:768px) { .lab-grid,.lab-preview,.lab-confidence { grid-template-columns:1fr; } .lab-wrap { padding:24px 16px 40px; } .lab-header { flex-direction:column; align-items:flex-start; gap:10px; } }
@@ -1404,25 +1404,77 @@ function labOpenPreview(image){
   const preview = document.getElementById("lab-image-modal-content");
   preview.src = image.src;
   preview.alt = image.alt || "实验室图片大图预览";
-  preview.style.transform = 'scale(1)';
   modal.hidden = false;
-  let labZoom = 1;
+
+  let labZoom = 1, labTX = 0, labTY = 0;
+  let labDragging = false, labDownX = 0, labDownY = 0, labStartTX = 0, labStartTY = 0;
+
+  function clamp(){
+    const w = (preview.naturalWidth || preview.width) * labZoom;
+    const h = (preview.naturalHeight || preview.height) * labZoom;
+    const mw = modal.clientWidth, mh = modal.clientHeight;
+    const maxTX = Math.max(0, (w - mw) / 2 / labZoom);
+    const maxTY = Math.max(0, (h - mh) / 2 / labZoom);
+    labTX = Math.min(maxTX, Math.max(-maxTX, labTX));
+    labTY = Math.min(maxTY, Math.max(-maxTY, labTY));
+  }
+  function apply(){
+    preview.style.transform = `scale(${labZoom}) translate(${labTX}px, ${labTY}px)`;
+    preview.style.transition = labDragging ? 'none' : 'transform .15s ease';
+    preview.style.cursor = labZoom > 1 ? (labDragging ? 'grabbing' : 'grab') : 'default';
+  }
+  preview.onload = function(){ labZoom=1; labTX=labTY=0; apply(); };
+  labZoom=1; labTX=labTY=0; apply();
+
   modal._labZoomHandler = function(e){
     e.preventDefault();
     labZoom += e.deltaY < 0 ? 0.1 : -0.1;
     labZoom = Math.min(5, Math.max(0.3, labZoom));
-    preview.style.transform = 'scale(' + labZoom + ')';
-    preview.style.transition = 'transform .1s ease';
+    clamp(); apply();
   };
   modal.addEventListener('wheel', modal._labZoomHandler, {passive:false});
+
+  modal._labDragStart = function(e){
+    if(labZoom <= 1) return;
+    labDragging = true;
+    labDownX = (e.touches ? e.touches[0].clientX : e.clientX);
+    labDownY = (e.touches ? e.touches[0].clientY : e.clientY);
+    labStartTX = labTX; labStartTY = labTY;
+    apply(); e.preventDefault();
+  };
+  modal._labDragMove = function(e){
+    if(!labDragging) return;
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    const cy = e.touches ? e.touches[0].clientY : e.clientY;
+    labTX = labStartTX + (cx - labDownX) / labZoom;
+    labTY = labStartTY + (cy - labDownY) / labZoom;
+    clamp(); apply();
+  };
+  modal._labDragEnd = function(){
+    labDragging = false; apply();
+  };
+  preview.addEventListener('mousedown', modal._labDragStart);
+  preview.addEventListener('touchstart', modal._labDragStart, {passive:false});
+  window.addEventListener('mousemove', modal._labDragMove);
+  window.addEventListener('touchmove', modal._labDragMove, {passive:false});
+  window.addEventListener('mouseup', modal._labDragEnd);
+  window.addEventListener('touchend', modal._labDragEnd);
 }
 function labClosePreview(event){
   if(event && event.target !== event.currentTarget) return;
   const modal = document.getElementById("lab-image-modal");
   modal.hidden = true;
+  const preview = document.getElementById("lab-image-modal-content");
   modal.removeEventListener('wheel', modal._labZoomHandler);
+  preview.removeEventListener('mousedown', modal._labDragStart);
+  preview.removeEventListener('touchstart', modal._labDragStart);
+  window.removeEventListener('mousemove', modal._labDragMove);
+  window.removeEventListener('touchmove', modal._labDragMove);
+  window.removeEventListener('mouseup', modal._labDragEnd);
+  window.removeEventListener('touchend', modal._labDragEnd);
   delete modal._labZoomHandler;
-  document.getElementById("lab-image-modal-content").src = "";
+  delete modal._labDragStart; delete modal._labDragMove; delete modal._labDragEnd;
+  preview.src = "";
 }
 // 页面内容在 head 之后才创建，所有 DOM 绑定必须延后到 DOMContentLoaded。
 window.addEventListener("DOMContentLoaded", () => {
@@ -2242,7 +2294,7 @@ ADMIN_HTML = """
     .json-block pre { min-height: 220px; max-height: 520px; margin: 0; padding: 13px; overflow: auto; background: #f7f4ec; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.55; }
     .image-modal { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 28px; background: rgba(0, 0, 0, .78); }
     .image-modal[hidden] { display: none; }
-    .image-modal img { display: block; max-width: min(96vw, 1800px); max-height: 90vh; object-fit: contain; background: #111; }
+    .image-modal img { display: block; max-width: min(96vw, 1800px); max-height: 90vh; object-fit: contain; background: #111; transform-origin: center center; touch-action: none; }
     .image-modal-close { position: fixed; top: 14px; right: 18px; border: 0; background: transparent; color: white; font-size: 32px; line-height: 1; cursor: pointer; }
     @media (max-width: 860px) { .grid, .split, .settings, .task-facts, .task-images, .task-json { grid-template-columns: 1fr; } header, .task-heading { align-items: stretch; flex-direction: column; } .auth input, .task-search input { width: 100%; } .files, .gallery-files { grid-template-columns: 1fr; } table { min-width: 760px; } .panel { overflow-x: auto; } }
   </style>
@@ -2539,25 +2591,78 @@ ADMIN_HTML = """
       const image = document.getElementById('image-modal-content');
       image.src = url;
       image.alt = label || '图片大图预览';
-      image.style.transform = 'scale(1)';
       modal.hidden = false;
-      let scale = 1;
+
+      let scale = 1, tx = 0, ty = 0;
+      let dragging = false, downX = 0, downY = 0, startTX = 0, startTY = 0;
+
+      function clamp(){
+        const w = (image.naturalWidth || image.width) * scale;
+        const h = (image.naturalHeight || image.height) * scale;
+        const mw = modal.clientWidth, mh = modal.clientHeight;
+        const maxTX = Math.max(0, (w - mw) / 2 / scale);
+        const maxTY = Math.max(0, (h - mh) / 2 / scale);
+        tx = Math.min(maxTX, Math.max(-maxTX, tx));
+        ty = Math.min(maxTY, Math.max(-maxTY, ty));
+      }
+      function apply(){
+        image.style.transform = `scale(${scale}) translate(${tx}px, ${ty}px)`;
+        image.style.transition = dragging ? 'none' : 'transform .15s ease';
+        image.style.cursor = scale > 1 ? (dragging ? 'grabbing' : 'grab') : 'default';
+      }
+
+      image.onload = function(){ scale=1; tx=ty=0; apply(); };
+      scale=1; tx=ty=0; apply();
+
       modal._zoomHandler = function(e){
         e.preventDefault();
         scale += e.deltaY < 0 ? 0.1 : -0.1;
         scale = Math.min(5, Math.max(0.3, scale));
-        image.style.transform = 'scale(' + scale + ')';
-        image.style.transition = 'transform .1s ease';
+        clamp(); apply();
       };
       modal.addEventListener('wheel', modal._zoomHandler, {passive:false});
+
+      modal._dragStart = function(e){
+        if(scale <= 1) return;
+        dragging = true;
+        downX = (e.touches ? e.touches[0].clientX : e.clientX);
+        downY = (e.touches ? e.touches[0].clientY : e.clientY);
+        startTX = tx; startTY = ty;
+        apply(); e.preventDefault();
+      };
+      modal._dragMove = function(e){
+        if(!dragging) return;
+        const cx = e.touches ? e.touches[0].clientX : e.clientX;
+        const cy = e.touches ? e.touches[0].clientY : e.clientY;
+        tx = startTX + (cx - downX) / scale;
+        ty = startTY + (cy - downY) / scale;
+        clamp(); apply();
+      };
+      modal._dragEnd = function(){
+        dragging = false; apply();
+      };
+      image.addEventListener('mousedown', modal._dragStart);
+      image.addEventListener('touchstart', modal._dragStart, {passive:false});
+      window.addEventListener('mousemove', modal._dragMove);
+      window.addEventListener('touchmove', modal._dragMove, {passive:false});
+      window.addEventListener('mouseup', modal._dragEnd);
+      window.addEventListener('touchend', modal._dragEnd);
     }
     function closeImagePreview(event){
       if(event && event.target !== event.currentTarget) return;
       const modal = document.getElementById('image-modal');
       modal.hidden = true;
+      const image = document.getElementById('image-modal-content');
       modal.removeEventListener('wheel', modal._zoomHandler);
+      image.removeEventListener('mousedown', modal._dragStart);
+      image.removeEventListener('touchstart', modal._dragStart);
+      window.removeEventListener('mousemove', modal._dragMove);
+      window.removeEventListener('touchmove', modal._dragMove);
+      window.removeEventListener('mouseup', modal._dragEnd);
+      window.removeEventListener('touchend', modal._dragEnd);
       delete modal._zoomHandler;
-      document.getElementById('image-modal-content').src = '';
+      delete modal._dragStart; delete modal._dragMove; delete modal._dragEnd;
+      image.src = '';
     }
     async function loadRequests(){
       let url = '/api/admin/requests?offset=' + ((requestPage - 1) * requestPageSize) + '&limit=' + requestPageSize;
