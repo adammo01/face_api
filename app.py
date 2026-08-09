@@ -2308,7 +2308,7 @@ ADMIN_HTML = """
       document.documentElement.setAttribute('data-theme', dark ? 'dark' : '');
       try { localStorage.setItem('faceblur_theme', dark ? 'dark' : 'light'); } catch(_){}
       const btn = document.getElementById('themeToggle');
-      if(btn) btn.textContent = dark ? '\u2600\uFE0F' : '\uD83C\uDF19';
+      if(btn) btn.textContent = dark ? '☀️' : '🌙';
     }
     function toggleTheme(){
       setTheme(document.documentElement.getAttribute('data-theme') !== 'dark');
