@@ -129,6 +129,7 @@ class AdminPageTests(unittest.TestCase):
 
     def test_lab_defaults_do_not_override_selected_global_mode(self):
         self.assertIn('const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:[]', APP_SOURCE)
+        self.assertIn('function labModeChanged(input)', APP_SOURCE)
         self.assertIn('id="lab-profiles" rows="8"', APP_SOURCE)
         self.assertIn('>[]</textarea>', APP_SOURCE)
 

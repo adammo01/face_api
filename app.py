@@ -1245,11 +1245,11 @@ def lab_page(request: Request):
             <div class="lab-param">
               <label>打码模式（可多选，按勾选顺序叠加）</label>
               <div id="lab-mode" class="lab-mode-options">
-                <label><input type="checkbox" value="landmark_whole_face" checked onchange="labToggleMode()" /> 整脸红点遮罩</label>
-                <label><input type="checkbox" value="landmark" onchange="labToggleMode()" /> 关键点遮罩</label>
-                <label><input type="checkbox" value="pixelate" onchange="labToggleMode()" /> 马赛克</label>
-                <label><input type="checkbox" value="gaussian" onchange="labToggleMode()" /> 高斯模糊</label>
-                <label><input type="checkbox" value="solid" onchange="labToggleMode()" /> 纯色遮挡</label>
+                <label><input type="checkbox" value="landmark_whole_face" checked onchange="labModeChanged(this)" /> 整脸红点遮罩</label>
+                <label><input type="checkbox" value="landmark" onchange="labModeChanged(this)" /> 关键点遮罩</label>
+                <label><input type="checkbox" value="pixelate" onchange="labModeChanged(this)" /> 马赛克</label>
+                <label><input type="checkbox" value="gaussian" onchange="labModeChanged(this)" /> 高斯模糊</label>
+                <label><input type="checkbox" value="solid" onchange="labModeChanged(this)" /> 纯色遮挡</label>
               </div>
               <div class="hint">例如同时勾选“高斯模糊”和“马赛克”，会先高斯模糊，再叠加马赛克。</div>
             </div>
@@ -1349,6 +1349,14 @@ function labToggleMode(){
   const lm = m.some(x=>x.startsWith("landmark"));
   ["lab-step","lab-dot","lab-n"].forEach(id=>document.getElementById(id).parentElement.style.display = lm?"":"none");
 }
+let labModeUserTouched = false;
+function labModeChanged(input){
+  if(!labModeUserTouched && input.checked && input.value !== "landmark_whole_face"){
+    document.querySelectorAll('#lab-mode input').forEach(o => { if(o.value === "landmark_whole_face") o.checked = false; });
+  }
+  labModeUserTouched = true;
+  labToggleMode();
+}
 function labSelectedModes(){
   return Array.from(document.querySelectorAll('#lab-mode input:checked')).map(x=>x.value);
 }
@@ -1386,6 +1394,7 @@ function labSetParams(params){
   document.getElementById("lab-dot-v").textContent = values.dot_radius;
   document.getElementById("lab-n-v").textContent = values.grid_n;
   labToggleMode();
+  labModeUserTouched = false;
   document.getElementById("lab-sync-btn").disabled = true;
 }
 function labEscapeHtml(value){
