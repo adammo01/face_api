@@ -2160,7 +2160,7 @@ ADMIN_HTML = """
     [data-theme="dark"] .btn.danger { background: #c0392b; }
     [data-theme="dark"] .card { background: var(--panel); }
     [data-theme="dark"] .panel { background: var(--panel); }
-    [data-theme="dark"] .field input { background: var(--panel); }
+    [data-theme="dark"] .field input { background: var(--panel); color: var(--ink); }
     [data-theme="dark"] .file { background: var(--panel); }
     [data-theme="dark"] .fact { background: var(--panel); }
     [data-theme="dark"] .image-preview { background: var(--panel); }
@@ -2172,7 +2172,7 @@ ADMIN_HTML = """
     [data-theme="dark"] .pill { background: #1a2a22; color: var(--accent); }
     [data-theme="dark"] .pill.err { background: #2a1a18; color: var(--warn); }
     [data-theme="dark"] .gallery-tools select, [data-theme="dark"] .request-tools select, [data-theme="dark"] .task-search input { background: var(--panel); color: var(--ink); }
-    [data-theme="dark"] .auth input { background: var(--panel); }
+    [data-theme="dark"] .auth input { background: var(--panel); color: var(--ink); }
     [data-theme="dark"] .image-empty { background: var(--bg); }
     [data-theme="dark"] .image-modal img { background: #1a1a1a; }
     [data-theme="dark"] .pager { border-top-color: var(--line); }
