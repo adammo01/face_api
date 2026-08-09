@@ -501,7 +501,10 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
 
     # landmark 模式: detect_multiscale (鲁棒) + per-face detect_with_landmarks (取关键点)
     landmark_modes = {"landmark", "landmark_whole_face"}
-    if any(m in landmark_modes for m in modes) or any(m in landmark_modes for p in profiles for m in p.get("modes", [])):
+    uses_landmark = any(m in landmark_modes for m in modes) or any(
+        m in landmark_modes for p in profiles for m in p.get("modes", [])
+    )
+    if uses_landmark:
         faces_list = detector.detect_multiscale(img)
         # 默认参数区分两种 landmark 模式
         if "landmark_whole_face" in modes:
@@ -600,7 +603,7 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     # D 修复: landmark 模式 faces 是 dict 列表，普通模式是 FaceBox 列表
-    if any(m in landmark_modes for m in modes):
+    if uses_landmark:
         _face_count = len(blurred_faces)
     else:
         _face_count = len(faces)
@@ -612,7 +615,7 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
         "elapsed_ms": round(elapsed_ms, 2),
     }
     if return_faces:
-        if any(m in landmark_modes for m in modes):
+        if uses_landmark:
             result["faces"] = [asdict(f) if hasattr(f, "__dataclass_fields__") else dict(f) for f in faces_list]
         else:
             result["faces"] = [asdict(f) if hasattr(f, "__dataclass_fields__") else dict(f)
