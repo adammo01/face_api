@@ -1165,6 +1165,13 @@ def lab_page(request: Request):
     .lab-param input[type=range] { width:100%; height:6px; accent-color:var(--accent); border-radius:3px; }
     .lab-param select { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font-size:14px; cursor:pointer; }
     .lab-param .hint { font-size:11px; color:var(--muted); margin-top:1px; }
+    .lab-mode-options { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+    .lab-mode-options label { display:flex; align-items:center; gap:7px; margin:0; padding:8px 10px; border:1px solid var(--line); border-radius:7px; font-size:13px; font-weight:500; cursor:pointer; }
+    .lab-mode-options input { width:15px; height:15px; accent-color:var(--accent); }
+    .lab-json-help { margin-top:7px; font-size:12px; color:var(--muted); }
+    .lab-json-help summary { cursor:pointer; }
+    .lab-json-help pre { margin:6px 0; padding:8px; overflow:auto; border-radius:6px; background:var(--bg); color:var(--ink); font:11px ui-monospace,monospace; }
+    .lab-fill-example { margin-top:7px; padding:7px 10px; font-size:12px; }
     .lab-btns { display:flex; gap:10px; margin-top:12px; }
     .btn { border:none; padding:12px 20px; border-radius:10px; cursor:pointer; font-size:14px; font-weight:600; transition:all .15s; display:inline-flex; align-items:center; gap:6px; }
     .btn.primary { background:var(--accent); color:#fff; }
@@ -1185,7 +1192,7 @@ def lab_page(request: Request):
     .lab-image-modal img { max-width:94vw; max-height:88vh; border-radius:12px; box-shadow:0 8px 40px rgba(0,0,0,0.4); transform-origin: center center; touch-action: none; }
     .lab-image-modal-close { position:fixed; top:16px; right:20px; border:0; background:rgba(255,255,255,0.12); color:white; width:40px; height:40px; border-radius:8px; font-size:22px; cursor:pointer; transition:background .15s; }
     .lab-image-modal-close:hover { background:rgba(255,255,255,0.22); }
-    @media (max-width:768px) { .lab-grid,.lab-preview,.lab-confidence { grid-template-columns:1fr; } .lab-wrap { padding:24px 16px 40px; } .lab-header { flex-direction:column; align-items:flex-start; gap:10px; } }
+    @media (max-width:768px) { .lab-grid,.lab-preview,.lab-confidence,.lab-mode-options { grid-template-columns:1fr; } .lab-wrap { padding:24px 16px 40px; } .lab-header { flex-direction:column; align-items:flex-start; gap:10px; } }
     .spinner { display:inline-block; width:16px; height:16px; border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin .6s linear infinite; }
     @keyframes spin { to { transform:rotate(360deg); } }
     </style>
@@ -1236,17 +1243,31 @@ def lab_page(request: Request):
           <div class="lab-params-head"><h3>⚙️ 打码参数</h3></div>
           <div class="lab-params-body">
             <div class="lab-param">
-              <label>打码模式</label>
-              <select id="lab-mode" multiple size="5" onchange="labToggleMode()">
-                <option value="landmark_whole_face">整脸红点遮罩</option>
-                <option value="landmark">关键点遮罩</option>
-                <option value="pixelate">马赛克</option>
-                <option value="gaussian">高斯模糊</option>
-                <option value="solid">纯色遮挡</option>
-              </select>
-              <div class="hint">按住 Ctrl/Command 可多选，执行时按选中顺序叠加</div>
+              <label>打码模式（可多选，按勾选顺序叠加）</label>
+              <div id="lab-mode" class="lab-mode-options">
+                <label><input type="checkbox" value="landmark_whole_face" checked onchange="labToggleMode()" /> 整脸红点遮罩</label>
+                <label><input type="checkbox" value="landmark" onchange="labToggleMode()" /> 关键点遮罩</label>
+                <label><input type="checkbox" value="pixelate" onchange="labToggleMode()" /> 马赛克</label>
+                <label><input type="checkbox" value="gaussian" onchange="labToggleMode()" /> 高斯模糊</label>
+                <label><input type="checkbox" value="solid" onchange="labToggleMode()" /> 纯色遮挡</label>
+              </div>
+              <div class="hint">例如同时勾选“高斯模糊”和“马赛克”，会先高斯模糊，再叠加马赛克。</div>
             </div>
-            <div class="lab-param"><label>距离分档方案 JSON</label><textarea id="lab-profiles" rows="8" style="width:100%;font:12px ui-monospace,monospace;padding:8px;border:1px solid var(--line);border-radius:8px">[{"name":"small","min_width":0,"max_width":99,"modes":["landmark_whole_face"],"face_grid_step":20,"dot_radius":1,"grid_n":3},{"name":"medium","min_width":100,"max_width":199,"modes":["landmark_whole_face"],"face_grid_step":12,"dot_radius":2,"grid_n":5},{"name":"large","min_width":200,"max_width":10000,"modes":["landmark_whole_face"],"face_grid_step":14,"dot_radius":3,"grid_n":5}]</textarea><div class="hint">每档按原始脸宽命中，可为每档配置多个 modes</div></div>
+            <div class="lab-param">
+              <label>距离分档方案</label>
+              <textarea id="lab-profiles" rows="8" style="width:100%;font:12px ui-monospace,monospace;padding:8px;border:1px solid var(--line);border-radius:8px">[{"name":"small","min_width":0,"max_width":99,"modes":["landmark_whole_face"],"face_grid_step":20,"dot_radius":1,"grid_n":3},{"name":"medium","min_width":100,"max_width":199,"modes":["landmark_whole_face"],"face_grid_step":12,"dot_radius":2,"grid_n":5},{"name":"large","min_width":200,"max_width":10000,"modes":["landmark_whole_face"],"face_grid_step":14,"dot_radius":3,"grid_n":5}]</textarea>
+              <div class="hint">按原始脸宽(px)命中一档：small=0-99、medium=100-199、large=200以上。每档的 modes 和参数独立生效；未命中时使用上面的全局模式。</div>
+              <details class="lab-json-help"><summary>查看填写示例</summary><pre>{
+  "name": "medium",
+  "min_width": 100,
+  "max_width": 199,
+  "modes": ["gaussian", "pixelate"],
+  "face_grid_step": 12,
+  "dot_radius": 2,
+  "grid_n": 5
+}</pre><div class="hint">整个输入必须是数组，例如 [{...}, {...}]。modes 可填写 landmark、landmark_whole_face、pixelate、gaussian、solid。</div></details>
+              <button type="button" class="btn secondary lab-fill-example" onclick="labFillProfileExample()">填入三档示例</button>
+            </div>
             <div class="lab-param"><label>检测阈值 <span id="lab-score-v">0.52</span></label><input type="range" id="lab-score" min="0.3" max="1.0" step="0.01" value="0.52" oninput="document.getElementById('lab-score-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">越小越灵敏，可能有误检</div></div>
             <div class="lab-param"><label>扩框比例 <span id="lab-expand-v">0.30</span></label><input type="range" id="lab-expand" min="0" max="1.0" step="0.05" value="0.30" oninput="document.getElementById('lab-expand-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">检测框向外扩展的安全余量</div></div>
             <div class="lab-param"><label>跳小脸(px) <span id="lab-minface-v">50</span></label><input type="range" id="lab-minface" min="0" max="500" step="5" value="50" oninput="document.getElementById('lab-minface-v').textContent=this.value" /><div class="hint">脸宽小于此值直接跳过，0=全部打码</div></div>
@@ -1287,7 +1308,8 @@ def lab_page(request: Request):
 const BASE = window.location.origin;
 const LAB_TOKEN = new URLSearchParams(location.search).get("token") || "";
 const LAB_PRESETS_KEY = "faceblur.lab.presets.v1";
-const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:[], score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5};
+const LAB_PROFILE_EXAMPLE = [{name:"small",min_width:0,max_width:99,modes:["landmark_whole_face"],face_grid_step:20,dot_radius:1,grid_n:3},{name:"medium",min_width:100,max_width:199,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:5},{name:"large",min_width:200,max_width:10000,modes:["landmark_whole_face"],face_grid_step:14,dot_radius:3,grid_n:5}];
+const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:LAB_PROFILE_EXAMPLE, score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5};
 async function apiLab(path, opts={}){
   if(LAB_TOKEN){ opts.headers = opts.headers || {}; opts.headers["X-Admin-Token"] = LAB_TOKEN; }
   const r = await fetch(BASE+path, opts);
@@ -1322,9 +1344,16 @@ async function labUpload(input){
   document.getElementById("lab-sync-btn").disabled = true;
 }
 function labToggleMode(){
-  const m = Array.from(document.getElementById("lab-mode").selectedOptions).map(x=>x.value);
+  const m = labSelectedModes();
   const lm = m.some(x=>x.startsWith("landmark"));
   ["lab-step","lab-dot","lab-n"].forEach(id=>document.getElementById(id).parentElement.style.display = lm?"":"none");
+}
+function labSelectedModes(){
+  return Array.from(document.querySelectorAll('#lab-mode input:checked')).map(x=>x.value);
+}
+function labFillProfileExample(){
+  document.getElementById("lab-profiles").value = JSON.stringify(LAB_PROFILE_EXAMPLE, null, 2);
+  document.getElementById("lab-status").textContent = "✓ 已填入小脸 / 中脸 / 大脸三档示例，可直接修改数值或模式";
 }
 function labReadPresets(){
   try { const value = JSON.parse(localStorage.getItem(LAB_PRESETS_KEY) || "{}"); return value && typeof value === "object" ? value : {}; }
@@ -1336,7 +1365,9 @@ function labWritePresets(presets){
 }
 function labCurrentParams(){
   let face_profiles=[]; try { face_profiles=JSON.parse(document.getElementById("lab-profiles").value||"[]"); } catch(e) { throw new Error("距离分档 JSON 格式错误"); }
-  const modes=Array.from(document.getElementById("lab-mode").selectedOptions).map(x=>x.value);
+  if(!Array.isArray(face_profiles)) throw new Error("距离分档必须是 JSON 数组");
+  const modes=labSelectedModes();
+  if(!modes.length) throw new Error("请至少选择一个打码模式");
   return {mode:modes[0]||"gaussian", modes, face_profiles, score_threshold:Number(document.getElementById("lab-score").value), expand_ratio:Number(document.getElementById("lab-expand").value), min_face_skip:Number(document.getElementById("lab-minface").value), face_grid_step:Number(document.getElementById("lab-step").value), dot_radius:Number(document.getElementById("lab-dot").value), grid_n:Number(document.getElementById("lab-n").value)};
 }
 function labSetParams(params){
@@ -1345,7 +1376,7 @@ function labSetParams(params){
     const id = {mode:"lab-mode", score_threshold:"lab-score", expand_ratio:"lab-expand", min_face_skip:"lab-minface", face_grid_step:"lab-step", dot_radius:"lab-dot", grid_n:"lab-n"}[name];
     if(name !== "mode") document.getElementById(id).value = values[name];
   });
-  const modes=values.modes||[values.mode]; document.querySelectorAll('#lab-mode option').forEach(o=>o.selected=modes.includes(o.value));
+  const modes=values.modes||[values.mode]; document.querySelectorAll('#lab-mode input').forEach(o=>o.checked=modes.includes(o.value));
   document.getElementById('lab-profiles').value=JSON.stringify(values.face_profiles||[],null,2);
   document.getElementById("lab-score-v").textContent = Number(values.score_threshold).toFixed(2);
   document.getElementById("lab-expand-v").textContent = Number(values.expand_ratio).toFixed(2);

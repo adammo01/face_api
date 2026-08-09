@@ -106,10 +106,13 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('labSetParams(LAB_DEFAULTS);', APP_SOURCE)
 
     def test_lab_supports_multi_mode_distance_profiles(self):
-        self.assertIn('multiple size="5"', APP_SOURCE)
+        self.assertIn('id="lab-mode" class="lab-mode-options"', APP_SOURCE)
+        self.assertIn('type="checkbox" value="gaussian"', APP_SOURCE)
+        self.assertIn('function labSelectedModes()', APP_SOURCE)
         self.assertIn('face_profiles', APP_SOURCE)
         self.assertIn('modes: params.modes', APP_SOURCE)
-        self.assertIn('按住 Ctrl/Command 可多选', APP_SOURCE)
+        self.assertIn('function labFillProfileExample()', APP_SOURCE)
+        self.assertIn('查看填写示例', APP_SOURCE)
 
     def test_lab_shows_before_and_after_face_confidence(self):
         self.assertIn('id="lab-confidence-before"', APP_SOURCE)
