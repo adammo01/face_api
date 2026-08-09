@@ -123,7 +123,9 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('x.task_id', ADMIN_HTML)
 
     def test_parent_task_search_resets_and_refreshes_the_active_gallery(self):
+        self.assertIn('async function findTask(){', ADMIN_HTML)
         self.assertIn("const isTaskId = /^[0-9a-f]{32}$/i.test(q);", ADMIN_HTML)
+        self.assertIn('if(isTaskId && await showTaskDetail(q)){', ADMIN_HTML)
         self.assertNotIn('if(!q) return;', ADMIN_HTML)
         self.assertIn('galleryPage = 1;', ADMIN_HTML)
         self.assertIn("if(activeTab === 'gallery') loadGalleryPage();", ADMIN_HTML)

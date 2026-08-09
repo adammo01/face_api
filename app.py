@@ -2013,7 +2013,7 @@ def admin_summary(
 def admin_requests(
     request: Request,
     offset: int = Query(0, ge=0),
-    limit: int = Query(10, ge=10, le=200),
+    limit: int = Query(20, ge=10, le=200),
     status: str | None = Query(default=None),
     parent_task_id: str | None = Query(default=None),
     authorization: str | None = Header(default=None),
@@ -2370,8 +2370,7 @@ ADMIN_HTML = """
             <label for="request-page-size">每页显示</label>
             <select id="request-page-size" onchange="changeRequestPageSize()">
               <option value="10">10</option>
-              <option value="15" selected>15</option>
-              <option value="20">20</option>
+              <option value="20" selected>20</option>
               <option value="50">50</option>
               <option value="100">100</option>
               <option value="200">200</option>
@@ -2459,7 +2458,7 @@ ADMIN_HTML = """
     let activeTab = 'overview';
     let activeParentSearch = '';
     let requestPage = 1;
-    let requestPageSize = 15;
+    let requestPageSize = 20;
     let requestPageCount = 1;
     let galleryPage = 1;
     let galleryPageSize = 10;
@@ -2754,13 +2753,24 @@ ADMIN_HTML = """
         showTab('task');
         history.replaceState(null, '', `#task=${encodeURIComponent(taskId)}`);
         window.scrollTo({top: 0, behavior: 'smooth'});
-      } catch(e) { setStatus(`任务查询失败: ${e.message}`); }
+        return true;
+      } catch(e) {
+        setStatus(`任务查询失败: ${e.message}`);
+        return false;
+      }
     }
-    function findTask(){
+    async function findTask(){
       const q = document.getElementById('task-search').value.trim();
-      if(!q) return;
-      if(q.length === 32){ activeParentSearch = ''; showTaskDetail(q); }
-      else { activeParentSearch = q; requestPage = 1; loadRequests(); loadFiles(); }
+      const isTaskId = /^[0-9a-f]{32}$/i.test(q);
+      if(isTaskId && await showTaskDetail(q)){
+        activeParentSearch = '';
+        return;
+      }
+      activeParentSearch = q;
+      requestPage = 1;
+      galleryPage = 1;
+      await Promise.all([loadRequests(), loadFiles()]);
+      if(activeTab === 'gallery') loadGalleryPage();
     }
     async function copyTaskId(){
       const taskId = document.getElementById('task-search').value.trim();
