@@ -477,6 +477,10 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
         }
     """
     valid_modes = set(BLUR_MODES.keys()) | {"landmark", "landmark_whole_face"}
+    modes = list(blur_params.pop("modes", []) or [mode])
+    profiles = list(blur_params.pop("face_profiles", []) or [])
+    if any(m not in valid_modes for m in modes):
+        raise ValueError(f"modes must be drawn from {sorted(valid_modes)}")
     if mode not in valid_modes:
         raise ValueError(f"mode must be one of {sorted(valid_modes)}, got {mode!r}")
 
@@ -496,10 +500,11 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
     detector = _get_detector(score_threshold)
 
     # landmark 模式: detect_multiscale (鲁棒) + per-face detect_with_landmarks (取关键点)
-    if mode in ("landmark", "landmark_whole_face"):
+    landmark_modes = {"landmark", "landmark_whole_face"}
+    if any(m in landmark_modes for m in modes) or any(m in landmark_modes for p in profiles for m in p.get("modes", [])):
         faces_list = detector.detect_multiscale(img)
         # 默认参数区分两种 landmark 模式
-        if mode == "landmark_whole_face":
+        if "landmark_whole_face" in modes:
             dot_radius = int(blur_params.get("dot_radius", 3))
             face_grid_step = int(blur_params.get("face_grid_step", 14))
             grid_n = int(blur_params.get("grid_n", 5))
@@ -519,7 +524,10 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
         for face in faces_list:
             # 脸宽 < min_face_skip 直接跳过 (不打码, 原样保留远景小脸细节)
             # 用原始脸宽 face.w 判断 (expand 后的 bw 会放大, 不准确)
-            if min_face_skip > 0 and face.w < min_face_skip:
+            profile = next((p for p in profiles if int(p.get("min_width", 0)) <= face.w <= int(p.get("max_width", 1000000))), {})
+            face_modes = profile.get("modes") or modes
+            local_skip = int(profile.get("min_face_skip", min_face_skip))
+            if local_skip > 0 and face.w < local_skip:
                 continue
             box = face.expand(w, h, ratio=expand_ratio)
             bx, by, bw, bh = box.x, box.y, box.w, box.h
@@ -550,37 +558,39 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
             except Exception:
                 pass
             region = img[by:by + bh, bx:bx + bw]
-            if mode == "landmark_whole_face":
-                # 自适应密度: 小脸(远景)用更大的 step + 更小的点, 大脸保持默认
-                # 三层分段硬切: L1小脸 / L2中脸(密度增强) / L3大脸(原方案)
-                if blur_params.get("adaptive", False):
-                    if bw < 100:        f_step, f_dot = 20, 1
-                    elif bw < 200:      f_step, f_dot = 12, 2
-                    else:               f_step, f_dot = 14, 3
+            for face_mode in face_modes:
+                if face_mode not in valid_modes:
+                    raise ValueError(f"invalid face profile mode: {face_mode!r}")
+                if face_mode == "landmark_whole_face":
+                    f_step = int(profile.get("face_grid_step", face_grid_step or 14))
+                    f_dot = int(profile.get("dot_radius", dot_radius))
+                    f_grid_n = int(profile.get("grid_n", grid_n or 5))
+                    region = _apply_landmark_whole_face_with_landmarks(
+                        region, landmarks=landmarks,
+                        face_grid_step=f_step, dot_radius=f_dot,
+                        grid_n=f_grid_n, spacing=f_step, color=color,
+                        region_box=(bx, by, bw, bh),
+                    )
+                elif face_mode == "landmark":
+                    region = _apply_landmark_dots(region, landmarks=landmarks,
+                        dot_radius=int(profile.get("dot_radius", dot_radius)),
+                        spacing=int(profile.get("face_grid_step", spacing)), color=color,
+                        region_box=(bx, by, bw, bh))
                 else:
-                    f_step, f_dot = face_grid_step, dot_radius
-                region = _apply_landmark_whole_face_with_landmarks(
-                    region, landmarks=landmarks,
-                    face_grid_step=f_step, dot_radius=f_dot,
-                    grid_n=grid_n, spacing=f_step, color=color,
-                    region_box=(bx, by, bw, bh),
-                )
-            else:  # landmark
-                region = _apply_landmark_dots(
-                    region, landmarks=landmarks,
-                    dot_radius=dot_radius, spacing=spacing, color=color,
-                    region_box=(bx, by, bw, bh),
-                )
+                    region = BLUR_MODES[face_mode](region)
             img[by:by + bh, bx:bx + bw] = region
             face.landmarks = landmarks or {}
             blurred_faces.append(face)
     else:
         faces = detector.detect_multiscale(img)
-        blur_fn = BLUR_MODES[mode]
         for face in faces:
+            profile = next((p for p in profiles if int(p.get("min_width", 0)) <= face.w <= int(p.get("max_width", 1000000))), {})
+            face_modes = profile.get("modes") or modes
             box = face.expand(w, h, ratio=expand_ratio)
             region = img[box.y:box.y + box.h, box.x:box.x + box.w]
-            img[box.y:box.y + box.h, box.x:box.x + box.w] = blur_fn(region, **blur_params)
+            for face_mode in face_modes:
+                region = BLUR_MODES[face_mode](region)
+            img[box.y:box.y + box.h, box.x:box.x + box.w] = region
 
     # 编码输出
     encode_params = [cv2.IMWRITE_JPEG_QUALITY, 92]
@@ -590,7 +600,7 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
     # D 修复: landmark 模式 faces 是 dict 列表，普通模式是 FaceBox 列表
-    if mode in ("landmark", "landmark_whole_face"):
+    if any(m in landmark_modes for m in modes):
         _face_count = len(blurred_faces)
     else:
         _face_count = len(faces)
@@ -602,7 +612,7 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
         "elapsed_ms": round(elapsed_ms, 2),
     }
     if return_faces:
-        if mode in ("landmark", "landmark_whole_face"):
+        if any(m in landmark_modes for m in modes):
             result["faces"] = [asdict(f) if hasattr(f, "__dataclass_fields__") else dict(f) for f in faces_list]
         else:
             result["faces"] = [asdict(f) if hasattr(f, "__dataclass_fields__") else dict(f)

@@ -212,6 +212,24 @@ class TaskTrackingTests(unittest.TestCase):
             },
         )
 
+    def test_multi_mode_profiles_reach_blur_core(self):
+        processed = {'image_bytes': b'profile-image', 'face_count': 1, 'elapsed_ms': 1.0, 'faces': []}
+        profiles = [{'name': 'medium', 'min_width': 100, 'max_width': 199,
+                     'modes': ['gaussian', 'landmark_whole_face'],
+                     'face_grid_step': 11, 'dot_radius': 2, 'grid_n': 4}]
+        with patch.object(self.module, '_download', return_value=b'input-image'), \
+                patch.object(self.module, 'process_image', return_value=processed) as process_mock:
+            response = self.client.post('/api/face_blur', json={
+                'image_url': 'https://example.com/profile.jpg',
+                'mode': 'landmark_whole_face',
+                'modes': ['gaussian', 'landmark_whole_face'],
+                'face_profiles': profiles,
+            })
+        self.assertEqual(response.status_code, 200)
+        kwargs = process_mock.call_args.kwargs
+        self.assertEqual(kwargs['modes'], ['gaussian', 'landmark_whole_face'])
+        self.assertEqual(kwargs['face_profiles'], profiles)
+
     def test_clear_cache_removes_memory_cache(self):
         self.module._cache_set('test-key', {'ok': True})
         old_epoch = self.module._get_setting('cache_epoch', '0')

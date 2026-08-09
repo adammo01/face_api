@@ -318,6 +318,7 @@ def _set_settings(values: dict) -> dict:
         "dot_radius": (1, 20, int),
         "face_grid_step": (4, 60, int),
         "grid_n": (1, 11, int),
+        "face_profiles": (None, None, list),
     }
     saved = {}
     with _db() as conn:
@@ -325,9 +326,13 @@ def _set_settings(values: dict) -> dict:
             if key not in allowed:
                 continue
             lo, hi, caster = allowed[key]
-            val = caster(raw)
-            val = max(lo, min(hi, val))
-            text = str(val)
+            if key == "face_profiles":
+                val = raw
+                text = json.dumps(val, ensure_ascii=False, separators=(",", ":"))
+            else:
+                val = caster(raw)
+                val = max(lo, min(hi, val))
+                text = str(val)
             conn.execute(
                 "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
                 (key, text, _utc_now()),
@@ -700,6 +705,8 @@ class FaceBlurRequest(BaseModel):
         "gaussian",
         pattern=r"^(pixelate|gaussian|solid|landmark|landmark_whole_face)$",
     )
+    modes: list[str] = Field(default_factory=list, max_length=5)
+    face_profiles: list[dict] = Field(default_factory=list, max_length=3)
     # 默认值已对齐 face_blur.py / v14r3 推荐参数 (2026-08-05)
     score_threshold: float = Field(0.52, ge=0.1, le=0.99)
     expand_ratio: float = Field(0.30, ge=0.0, le=1.0)
@@ -1230,14 +1237,16 @@ def lab_page(request: Request):
           <div class="lab-params-body">
             <div class="lab-param">
               <label>打码模式</label>
-              <select id="lab-mode" onchange="labToggleMode()">
+              <select id="lab-mode" multiple size="5" onchange="labToggleMode()">
                 <option value="landmark_whole_face">整脸红点遮罩</option>
                 <option value="landmark">关键点遮罩</option>
                 <option value="pixelate">马赛克</option>
                 <option value="gaussian">高斯模糊</option>
                 <option value="solid">纯色遮挡</option>
               </select>
+              <div class="hint">按住 Ctrl/Command 可多选，执行时按选中顺序叠加</div>
             </div>
+            <div class="lab-param"><label>距离分档方案 JSON</label><textarea id="lab-profiles" rows="8" style="width:100%;font:12px ui-monospace,monospace;padding:8px;border:1px solid var(--line);border-radius:8px">[{"name":"small","min_width":0,"max_width":99,"modes":["landmark_whole_face"],"face_grid_step":20,"dot_radius":1,"grid_n":3},{"name":"medium","min_width":100,"max_width":199,"modes":["landmark_whole_face"],"face_grid_step":12,"dot_radius":2,"grid_n":5},{"name":"large","min_width":200,"max_width":10000,"modes":["landmark_whole_face"],"face_grid_step":14,"dot_radius":3,"grid_n":5}]</textarea><div class="hint">每档按原始脸宽命中，可为每档配置多个 modes</div></div>
             <div class="lab-param"><label>检测阈值 <span id="lab-score-v">0.52</span></label><input type="range" id="lab-score" min="0.3" max="1.0" step="0.01" value="0.52" oninput="document.getElementById('lab-score-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">越小越灵敏，可能有误检</div></div>
             <div class="lab-param"><label>扩框比例 <span id="lab-expand-v">0.30</span></label><input type="range" id="lab-expand" min="0" max="1.0" step="0.05" value="0.30" oninput="document.getElementById('lab-expand-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">检测框向外扩展的安全余量</div></div>
             <div class="lab-param"><label>跳小脸(px) <span id="lab-minface-v">50</span></label><input type="range" id="lab-minface" min="0" max="500" step="5" value="50" oninput="document.getElementById('lab-minface-v').textContent=this.value" /><div class="hint">脸宽小于此值直接跳过，0=全部打码</div></div>
@@ -1278,7 +1287,7 @@ def lab_page(request: Request):
 const BASE = window.location.origin;
 const LAB_TOKEN = new URLSearchParams(location.search).get("token") || "";
 const LAB_PRESETS_KEY = "faceblur.lab.presets.v1";
-const LAB_DEFAULTS = {mode:"landmark_whole_face", score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5};
+const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:[], score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5};
 async function apiLab(path, opts={}){
   if(LAB_TOKEN){ opts.headers = opts.headers || {}; opts.headers["X-Admin-Token"] = LAB_TOKEN; }
   const r = await fetch(BASE+path, opts);
@@ -1313,8 +1322,8 @@ async function labUpload(input){
   document.getElementById("lab-sync-btn").disabled = true;
 }
 function labToggleMode(){
-  const m = document.getElementById("lab-mode").value;
-  const lm = m.startsWith("landmark");
+  const m = Array.from(document.getElementById("lab-mode").selectedOptions).map(x=>x.value);
+  const lm = m.some(x=>x.startsWith("landmark"));
   ["lab-step","lab-dot","lab-n"].forEach(id=>document.getElementById(id).parentElement.style.display = lm?"":"none");
 }
 function labReadPresets(){
@@ -1326,14 +1335,18 @@ function labWritePresets(presets){
   catch(e) { document.getElementById("lab-status").textContent = "✗ 预设保存失败: 浏览器存储不可用"; return false; }
 }
 function labCurrentParams(){
-  return {mode: document.getElementById("lab-mode").value, score_threshold: Number(document.getElementById("lab-score").value), expand_ratio: Number(document.getElementById("lab-expand").value), min_face_skip: Number(document.getElementById("lab-minface").value), face_grid_step: Number(document.getElementById("lab-step").value), dot_radius: Number(document.getElementById("lab-dot").value), grid_n: Number(document.getElementById("lab-n").value)};
+  let face_profiles=[]; try { face_profiles=JSON.parse(document.getElementById("lab-profiles").value||"[]"); } catch(e) { throw new Error("距离分档 JSON 格式错误"); }
+  const modes=Array.from(document.getElementById("lab-mode").selectedOptions).map(x=>x.value);
+  return {mode:modes[0]||"gaussian", modes, face_profiles, score_threshold:Number(document.getElementById("lab-score").value), expand_ratio:Number(document.getElementById("lab-expand").value), min_face_skip:Number(document.getElementById("lab-minface").value), face_grid_step:Number(document.getElementById("lab-step").value), dot_radius:Number(document.getElementById("lab-dot").value), grid_n:Number(document.getElementById("lab-n").value)};
 }
 function labSetParams(params){
   const values = Object.assign({}, LAB_DEFAULTS, params || {});
   ["mode","score_threshold","expand_ratio","min_face_skip","face_grid_step","dot_radius","grid_n"].forEach(name => {
     const id = {mode:"lab-mode", score_threshold:"lab-score", expand_ratio:"lab-expand", min_face_skip:"lab-minface", face_grid_step:"lab-step", dot_radius:"lab-dot", grid_n:"lab-n"}[name];
-    document.getElementById(id).value = values[name];
+    if(name !== "mode") document.getElementById(id).value = values[name];
   });
+  const modes=values.modes||[values.mode]; document.querySelectorAll('#lab-mode option').forEach(o=>o.selected=modes.includes(o.value));
+  document.getElementById('lab-profiles').value=JSON.stringify(values.face_profiles||[],null,2);
   document.getElementById("lab-score-v").textContent = Number(values.score_threshold).toFixed(2);
   document.getElementById("lab-expand-v").textContent = Number(values.expand_ratio).toFixed(2);
   document.getElementById("lab-minface-v").textContent = values.min_face_skip;
@@ -1387,7 +1400,8 @@ function labResetDefaults(){
   document.getElementById("lab-status").textContent = "✓ 已恢复默认参数";
 }
 async function labTest(){
-  const m = document.getElementById("lab-mode").value;
+  let params; try { params=labCurrentParams(); } catch(e) { document.getElementById("lab-status").textContent="✗ "+e.message; return; }
+  const m=params.modes[0]||"gaussian";
   const b64 = document.getElementById("lab-base64").value;
   const url = document.getElementById("lab-url").value.trim();
   if(!b64 && !url){ alert("请先上传图片或输入 URL"); return; }
@@ -1397,7 +1411,7 @@ async function labTest(){
   document.getElementById("lab-status").textContent = "正在提交打码请求...";
   document.getElementById("lab-confidence").hidden = true;
   try {
-    const body = {mode: m,
+    const body = {mode: m, modes: params.modes, face_profiles: params.face_profiles,
       score_threshold: Number(document.getElementById("lab-score").value),
       expand_ratio: Number(document.getElementById("lab-expand").value),
       min_face_skip: Number(document.getElementById("lab-minface").value),
@@ -1438,13 +1452,14 @@ async function labTest(){
 }
 async function labSyncGlobal(){
   if(!confirm("将当前参数同步到全局设置？\\n(对后续新建请求生效)")) return;
+  let params; try { params=labCurrentParams(); } catch(e) { document.getElementById("lab-status").textContent="✗ "+e.message; return; }
   const body = {
     score_threshold: Number(document.getElementById("lab-score").value),
     expand_ratio: Number(document.getElementById("lab-expand").value),
     min_face_skip: Number(document.getElementById("lab-minface").value),
     face_grid_step: Number(document.getElementById("lab-step").value),
     dot_radius: Number(document.getElementById("lab-dot").value),
-    grid_n: Number(document.getElementById("lab-n").value),
+    grid_n: Number(document.getElementById("lab-n").value), face_profiles: params.face_profiles,
   };
   try {
     await apiLab("/api/admin/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
@@ -1603,6 +1618,9 @@ def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None =
         raise HTTPException(413, "image too large")
     t0 = time.perf_counter()
     blur_params = {}
+    selected_modes = req.modes or [req.mode]
+    blur_params["modes"] = selected_modes
+    blur_params["face_profiles"] = req.face_profiles
     if req.mode == "landmark_whole_face":
         blur_params.update({
             "adaptive": False, "min_face_skip": req.min_face_skip if req.min_face_skip is not None else 50,
@@ -1658,6 +1676,8 @@ def face_blur(req: FaceBlurRequest, request: Request):
         "dot_radius": req.dot_radius if "dot_radius" in explicit else int(_get_blur_default("dot_radius", 3)),
         "face_grid_step": req.face_grid_step if "face_grid_step" in explicit else int(_get_blur_default("face_grid_step", 14)),
         "grid_n": req.grid_n if "grid_n" in explicit else int(_get_blur_default("grid_n", 5)),
+        "modes": req.modes if "modes" in explicit and req.modes else [req.mode],
+        "face_profiles": req.face_profiles if "face_profiles" in explicit and req.face_profiles else _get_blur_default("face_profiles", []),
     }
     # E: 计算缓存 key (L1 + L2 共用)
     _cache_payload = {k:v for k,v in req.model_dump(mode="json").items() if k not in ("parent_task_id","callback_url","image_base64")}
@@ -1765,6 +1785,8 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
         "dot_radius": req.dot_radius,
         "face_grid_step": req.face_grid_step,
         "grid_n": req.grid_n,
+        "modes": req.modes or [req.mode],
+        "face_profiles": req.face_profiles,
     }
 
     log.info(f"[req] mode={req.mode}  url={image_url[:120]}...")
@@ -1822,6 +1844,8 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             blur_params["spacing"] = req.spacing if "spacing" in req.model_fields_set else params["face_grid_step"]
             blur_params["face_grid_step"] = params["face_grid_step"]
             blur_params["grid_n"] = params["grid_n"]
+        blur_params["modes"] = params.get("modes") or [req.mode]
+        blur_params["face_profiles"] = params.get("face_profiles") or []
         result, process_attempts, process_error = _run_with_retries(
             "process_image",
             lambda: process_image(
@@ -2063,6 +2087,7 @@ def admin_summary(
             "dot_radius": _get_blur_default("dot_radius", 3),
             "face_grid_step": _get_blur_default("face_grid_step", 14),
             "grid_n": _get_blur_default("grid_n", 5),
+            "face_profiles": _get_blur_default("face_profiles", []),
         },
         "last_cleanup": dict(cleanup) if cleanup else None,
     }
@@ -2189,6 +2214,7 @@ class AdminSettingsRequest(BaseModel):
     dot_radius: Optional[int] = Field(default=None, ge=1, le=20)
     face_grid_step: Optional[int] = Field(default=None, ge=4, le=60)
     grid_n: Optional[int] = Field(default=None, ge=1, le=11)
+    face_profiles: Optional[list[dict]] = None
 
 
 @app.get("/api/admin/settings")
@@ -2213,6 +2239,7 @@ def admin_get_settings(
             "dot_radius": _get_blur_default("dot_radius", 3),
             "face_grid_step": _get_blur_default("face_grid_step", 14),
             "grid_n": _get_blur_default("grid_n", 5),
+            "face_profiles": _get_blur_default("face_profiles", []),
             "inflight_tasks": inflight,
         },
     }
@@ -2229,7 +2256,7 @@ def admin_set_settings(
     _require_admin(request, authorization, x_admin_token, token)
     values = {k: v for k, v in payload.model_dump().items() if v is not None}
     saved = _set_settings(values)
-    if any(key in values for key in ("score_threshold", "expand_ratio", "min_face_skip", "dot_radius", "face_grid_step", "grid_n")):
+    if any(key in values for key in ("score_threshold", "expand_ratio", "min_face_skip", "dot_radius", "face_grid_step", "grid_n", "face_profiles")):
         _cache_clear()
         _bump_cache_epoch()
         with _db() as conn:
