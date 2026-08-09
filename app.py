@@ -1040,39 +1040,100 @@ def lab_page(request: Request):
 <title>打码实验室 · FaceBlur</title>    
     <!-- ── 打码实验室独立页面 ── -->
     <style>
-    .lab-wrap { max-width:1100px; margin:0 auto; padding:20px; font-family: system-ui,-apple-system,sans-serif; color:var(--text); }
-    .lab-wrap h2 { margin:0 0 16px; font-size:20px; }
-    .lab-grid { display:grid; grid-template-columns: minmax(0,1.5fr) minmax(320px,1fr); gap:20px; }
-    .lab-upload { border:2px dashed var(--line); border-radius:8px; padding:30px; text-align:center; cursor:pointer; margin-bottom:12px; transition:border-color .2s; }
-    .lab-upload:hover { border-color:var(--accent); }
+    /* Lab 页面独立变量（独立访问时使用；iframe 内继承管理页） */
+    :root {
+      --ink: #171717;
+      --muted: #6f6b62;
+      --bg: #f4f2ec;
+      --panel: #fffdf7;
+      --line: #d8d2c4;
+      --accent: #1f7a5a;
+      --warn: #a84526;
+      --text: var(--ink);
+      --text-dim: var(--muted);
+      --bg-card: var(--panel);
+    }
+    [data-theme="dark"] {
+      --ink: #e0e0e0;
+      --muted: #999;
+      --bg: #1a1a1a;
+      --panel: #2a2a2a;
+      --line: #444;
+      --accent: #5cbf90;
+      --warn: #e07b5a;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; background: var(--bg); color: var(--ink); font-family: system-ui,-apple-system,sans-serif; }
+    .lab-wrap { max-width:1200px; margin:0 auto; padding:32px 24px 48px; }
+    .lab-wrap h2 { margin:0 0 8px; font-size:24px; font-weight:700; }
+    .lab-subtitle { color: var(--muted); font-size:14px; margin:0 0 24px; }
+
+    .lab-grid { display:grid; grid-template-columns: minmax(0,1.5fr) minmax(360px,1fr); gap:24px; }
+
+    /* 卡片通用 */
+    .lab-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.04); }
+    [data-theme="dark"] .lab-card { box-shadow: 0 2px 12px rgba(0,0,0,0.25); }
+    .lab-card-head { font-size:15px; font-weight:600; margin:0 0 14px; color: var(--ink); }
+
+    /* 上传区 */
+    .lab-upload { border:2px dashed var(--line); border-radius:12px; padding:36px 20px; text-align:center; cursor:pointer; transition:all .2s; background: var(--panel); }
+    .lab-upload:hover { border-color:var(--accent); background:rgba(31,122,90,0.03); }
     .lab-upload input { display:none; }
-    .lab-url { display:flex; gap:8px; margin-bottom:12px; }
-    .lab-url input { flex:1; padding:10px 12px; border:1px solid var(--line); border-radius:6px; }
-    .lab-preview { display:grid; grid-template-columns: 1fr 1fr; gap:8px; min-height:200px; }
-    .lab-preview img { width:100%; border-radius:8px; background:var(--bg-card); cursor:zoom-in; }
-    .lab-image-modal { position:fixed; inset:0; z-index:30; display:grid; place-items:center; padding:24px; background:rgba(0,0,0,.82); }
+
+    .lab-url { display:flex; gap:8px; margin-top:12px; }
+    .lab-url input { flex:1; padding:10px 14px; border:1px solid var(--line); border-radius:8px; background: var(--panel); color: var(--ink); font-size:14px; }
+    .lab-url input::placeholder { color: var(--muted); }
+
+    /* 预览区 */
+    .lab-preview { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px; }
+    .lab-preview-box { text-align:center; }
+    .lab-preview img { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:10px; background: var(--bg); cursor:zoom-in; border:1px solid var(--line); transition: transform .15s; }
+    .lab-preview img:hover { transform: scale(1.01); }
+    .lab-preview .label { font-size:12px; color:var(--muted); margin-top:6px; }
+
+    /* 置信度卡片 */
+    .lab-confidence { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:14px; }
+    .lab-conf-card { background: var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; box-shadow: 0 1px 6px rgba(0,0,0,0.03); }
+    [data-theme="dark"] .lab-conf-card { box-shadow: 0 1px 6px rgba(0,0,0,0.2); }
+    .lab-conf-card strong { display:block; font-size:13px; margin-bottom:6px; color: var(--ink); }
+    .lab-conf-card span { display:block; font-size:12px; color:var(--muted); line-height:1.7; }
+
+    /* 参数面板 */
+    .lab-params { background: var(--panel); padding:20px; border-radius:12px; border:1px solid var(--line); box-shadow: 0 2px 12px rgba(0,0,0,0.04); }
+    [data-theme="dark"] .lab-params { box-shadow: 0 2px 12px rgba(0,0,0,0.25); }
+    .lab-params h3 { margin:0 0 16px; font-size:16px; font-weight:600; }
+
+    .lab-param { margin-bottom:14px; }
+    .lab-param label { display:flex; justify-content:space-between; font-size:13px; font-weight:500; margin-bottom:4px; color: var(--ink); }
+    .lab-param label span { color:var(--muted); font-variant-numeric:tabular-nums; }
+    .lab-param input[type=range] { width:100%; accent-color:var(--accent); }
+    .lab-param select { width:100%; padding:9px 12px; border:1px solid var(--line); border-radius:8px; background: var(--panel); color: var(--ink); font-size:14px; }
+    .lab-param .hint { font-size:11px; color:var(--muted); margin-top:2px; }
+
+    /* 按钮 */
+    .lab-btns { display:flex; gap:8px; margin-top:18px; }
+    .btn { border:1px solid var(--ink); background: var(--ink); color: var(--bg); padding:11px 18px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:500; transition: opacity .15s; }
+    .btn:hover { opacity: 0.85; }
+    .btn:disabled { opacity:0.4; cursor:not-allowed; }
+    .btn.secondary { background:transparent; color:var(--ink); border-color:var(--line); }
+    [data-theme="dark"] .btn { background: #e0e0e0; color: #1a1a1a; border-color: #e0e0e0; }
+    [data-theme="dark"] .btn.secondary { background: transparent; color: #e0e0e0; border-color: #555; }
+
+    .lab-presets { border-top:1px solid var(--line); margin-top:18px; padding-top:16px; }
+    .lab-presets-row { margin-bottom:10px; }
+    .lab-presets-row select { width:100%; padding:9px 12px; border:1px solid var(--line); border-radius:8px; background: var(--panel); color: var(--ink); font-size:14px; }
+    .lab-presets-actions { display:flex; gap:8px; }
+
+    .status-text { font-size:13px; color:var(--muted); margin-top:12px; line-height:1.5; }
+
+    /* 图片弹窗 */
+    .lab-image-modal { position:fixed; inset:0; z-index:30; display:grid; place-items:center; padding:24px; background:rgba(0,0,0,.85); }
     .lab-image-modal[hidden] { display:none; }
-    .lab-image-modal img { max-width:96vw; max-height:90vh; width:auto; object-fit:contain; background:#111; }
+    .lab-image-modal img { max-width:96vw; max-height:90vh; border-radius:8px; }
     .lab-image-modal-close { position:fixed; top:12px; right:18px; border:0; background:transparent; color:white; font-size:32px; cursor:pointer; }
-    .lab-preview .label { font-size:12px; color:var(--text-dim); text-align:center; margin-top:4px; }
-    .lab-confidence { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:10px; }
-    .lab-confidence-card { border:1px solid var(--line); border-radius:6px; padding:10px; background:var(--bg-card); }
-    .lab-confidence-card strong { display:block; font-size:13px; margin-bottom:5px; }
-    .lab-confidence-card span { display:block; font-size:12px; color:var(--text-dim); line-height:1.6; }
-    .lab-params { background:var(--bg-card); padding:16px; border-radius:8px; border:1px solid var(--line); }
-    .lab-params h3 { margin:0 0 12px; font-size:16px; }
-    .lab-param { margin-bottom:12px; }
-    .lab-param label { display:flex; justify-content:space-between; font-size:13px; margin-bottom:3px; }
-    .lab-param label span { color:var(--text-dim); }
-    .lab-param input[type=range] { width:100%; }
-    .lab-param select { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; background:white; }
-    .lab-param .hint { font-size:11px; color:var(--text-dim); }
-    .lab-btns { display:flex; gap:8px; margin-top:14px; }
-    .lab-presets { border-top:1px solid var(--line); margin-top:16px; padding-top:14px; }
-    .lab-presets-row { display:flex; gap:8px; align-items:center; }
-    .lab-presets-row select { flex:1; min-width:0; padding:8px; border:1px solid var(--line); border-radius:6px; background:white; }
-    .lab-presets-actions { display:flex; gap:8px; margin-top:8px; }
-    @media (max-width:768px) { .lab-grid { grid-template-columns:1fr; } }
+
+    @media (max-width:768px) { .lab-grid,.lab-preview,.lab-confidence { grid-template-columns:1fr; } .lab-wrap { padding:20px 16px 32px; } }
+
     .spinner { display:inline-block; width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .6s linear infinite; vertical-align:middle; margin-right:6px; }
     @keyframes spin { to { transform:rotate(360deg); } }
     </style>
@@ -1080,6 +1141,7 @@ def lab_page(request: Request):
 <body>
     <div class="lab-wrap">
       <h2>🧪 打码实验室</h2>
+      <p class="lab-subtitle">独立打码测试环境，参数调试后可同步到全局设置</p>
       <div class="lab-grid">
         <div>
           <div class="hint" style="margin-bottom:12px">已使用管理页授权</div>
@@ -1095,8 +1157,8 @@ def lab_page(request: Request):
             <div><img id="lab-after" style="display:none" onclick="labOpenPreview(this)" /><div class="label">打码结果<span id="lab-face-info"></span></div></div>
           </div>
           <div class="lab-confidence" id="lab-confidence" hidden>
-            <div class="lab-confidence-card"><strong>原图人脸置信度</strong><span id="lab-confidence-before">-</span></div>
-            <div class="lab-confidence-card"><strong>打码后人脸置信度</strong><span id="lab-confidence-after">-</span></div>
+            <div class="lab-conf-card"><strong>原图人脸置信度</strong><span id="lab-confidence-before">-</span></div>
+            <div class="lab-conf-card"><strong>打码后人脸置信度</strong><span id="lab-confidence-after">-</span></div>
           </div>
         </div>
         <div class="lab-params">
@@ -1134,7 +1196,7 @@ def lab_page(request: Request):
               <button class="btn secondary" type="button" onclick="labResetDefaults()">恢复默认值</button>
             </div>
           </div>
-          <p id="lab-status" style="font-size:13px;color:var(--text-dim);margin-top:10px"></p>
+          <p id="lab-status" class="status-text"></p>
         </div>
       </div>
     </div>
@@ -1143,6 +1205,12 @@ def lab_page(request: Request):
       <img id="lab-image-modal-content" alt="实验室图片大图预览" />
     </div>
 <script>
+(function(){
+  try {
+    const s = localStorage.getItem('faceblur_theme');
+    if(s === 'dark') document.documentElement.setAttribute('data-theme','dark');
+  } catch(_){}
+})();
 const BASE = window.location.origin;
 const LAB_TOKEN = new URLSearchParams(location.search).get("token") || "";
 const LAB_PRESETS_KEY = "faceblur.lab.presets.v1";
