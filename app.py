@@ -1068,7 +1068,7 @@ def lab_page(request: Request):
     .lab-wrap h2 { margin:0 0 8px; font-size:24px; font-weight:700; }
     .lab-subtitle { color: var(--muted); font-size:14px; margin:0 0 24px; }
 
-    .lab-grid { display:grid; grid-template-columns: minmax(0,1.5fr) minmax(360px,1fr); gap:24px; }
+    .lab-grid { display:grid; grid-template-columns: minmax(0,1.6fr) minmax(340px,1fr); gap:20px; }
 
     /* 卡片通用 */
     .lab-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.04); }
@@ -1076,7 +1076,7 @@ def lab_page(request: Request):
     .lab-card-head { font-size:15px; font-weight:600; margin:0 0 14px; color: var(--ink); }
 
     /* 上传区 */
-    .lab-upload { border:2px dashed var(--line); border-radius:12px; padding:36px 20px; text-align:center; cursor:pointer; transition:all .2s; background: var(--panel); }
+    .lab-upload { border:2px dashed var(--line); border-radius:12px; padding:24px 20px; text-align:center; cursor:pointer; transition:all .2s; background: var(--panel); }
     .lab-upload:hover { border-color:var(--accent); background:rgba(31,122,90,0.03); }
     .lab-upload input { display:none; }
 
@@ -1087,7 +1087,7 @@ def lab_page(request: Request):
     /* 预览区 */
     .lab-preview { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px; }
     .lab-preview-box { text-align:center; }
-    .lab-preview img { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:10px; background: var(--bg); cursor:zoom-in; border:1px solid var(--line); transition: transform .15s; }
+    .lab-preview img { width:100%; aspect-ratio:4/3; min-height:340px; object-fit:cover; border-radius:10px; background: var(--bg); cursor:zoom-in; border:1px solid var(--line); transition: transform .15s; }
     .lab-preview img:hover { transform: scale(1.01); }
     .lab-preview .label { font-size:12px; color:var(--muted); margin-top:6px; }
 
