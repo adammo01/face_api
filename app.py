@@ -2158,6 +2158,24 @@ ADMIN_HTML = """
     [data-theme="dark"] .btn { background: #1a1a1a; color: #fff; }
     [data-theme="dark"] .btn.secondary { background: #333; color: #e0e0e0; }
     [data-theme="dark"] .btn.danger { background: #c0392b; }
+    [data-theme="dark"] .card { background: var(--panel); }
+    [data-theme="dark"] .panel { background: var(--panel); }
+    [data-theme="dark"] .field input { background: var(--panel); }
+    [data-theme="dark"] .file { background: var(--panel); }
+    [data-theme="dark"] .fact { background: var(--panel); }
+    [data-theme="dark"] .image-preview { background: var(--panel); }
+    [data-theme="dark"] .image-preview img { background: var(--bg); }
+    [data-theme="dark"] .json-block { background: var(--panel); }
+    [data-theme="dark"] .json-block pre { background: var(--bg); color: var(--ink); }
+    [data-theme="dark"] th { background: var(--panel); }
+    [data-theme="dark"] td { border-bottom-color: var(--line); }
+    [data-theme="dark"] .pill { background: #1a2a22; color: var(--accent); }
+    [data-theme="dark"] .pill.err { background: #2a1a18; color: var(--warn); }
+    [data-theme="dark"] .gallery-tools select, [data-theme="dark"] .request-tools select, [data-theme="dark"] .task-search input { background: var(--panel); color: var(--ink); }
+    [data-theme="dark"] .auth input { background: var(--panel); }
+    [data-theme="dark"] .image-empty { background: var(--bg); }
+    [data-theme="dark"] .image-modal img { background: #1a1a1a; }
+    [data-theme="dark"] .pager { border-top-color: var(--line); }
     .tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
     .tab { border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--muted); padding: 10px 16px; cursor: pointer; }
     .tab.active { border-bottom-color: var(--accent); color: var(--ink); font-weight: 700; }
