@@ -1040,163 +1040,168 @@ def lab_page(request: Request):
 <title>打码实验室 · FaceBlur</title>    
     <!-- ── 打码实验室独立页面 ── -->
     <style>
-    /* Lab 页面独立变量（独立访问时使用；iframe 内继承管理页） */
     :root {
-      --ink: #171717;
-      --muted: #6f6b62;
-      --bg: #f4f2ec;
-      --panel: #fffdf7;
-      --line: #d8d2c4;
-      --accent: #1f7a5a;
-      --warn: #a84526;
-      --text: var(--ink);
-      --text-dim: var(--muted);
-      --bg-card: var(--panel);
+      --ink: #171717; --muted: #6f6b62; --bg: #f4f2ec;
+      --panel: #fffdf7; --line: #d8d2c4; --accent: #1f7a5a; --warn: #a84526;
+      --accent-light: #e8f1eb; --text: var(--ink); --text-dim: var(--muted); --bg-card: var(--panel);
     }
     [data-theme="dark"] {
-      --ink: #e0e0e0;
-      --muted: #999;
-      --bg: #1a1a1a;
-      --panel: #2a2a2a;
-      --line: #444;
-      --accent: #5cbf90;
-      --warn: #e07b5a;
+      --ink: #e0e0e0; --muted: #999; --bg: #1a1a1a; --panel: #2a2a2a;
+      --line: #444; --accent: #5cbf90; --warn: #e07b5a; --accent-light: #1a2a22;
     }
     * { box-sizing: border-box; }
-    body { margin:0; background: var(--bg); color: var(--ink); font-family: system-ui,-apple-system,sans-serif; }
-    .lab-wrap { max-width:1200px; margin:0 auto; padding:32px 24px 48px; }
-    .lab-wrap h2 { margin:0 0 8px; font-size:24px; font-weight:700; }
-    .lab-subtitle { color: var(--muted); font-size:14px; margin:0 0 24px; }
-
-    .lab-grid { display:grid; grid-template-columns: minmax(0,1.6fr) minmax(340px,1fr); gap:20px; }
-
-    /* 卡片通用 */
-    .lab-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; box-shadow: 0 2px 12px rgba(0,0,0,0.04); }
-    [data-theme="dark"] .lab-card { box-shadow: 0 2px 12px rgba(0,0,0,0.25); }
-    .lab-card-head { font-size:15px; font-weight:600; margin:0 0 14px; color: var(--ink); }
-
-    /* 上传区 */
-    .lab-upload { border:2px dashed var(--line); border-radius:12px; padding:24px 20px; text-align:center; cursor:pointer; transition:all .2s; background: var(--panel); }
-    .lab-upload:hover { border-color:var(--accent); background:rgba(31,122,90,0.03); }
-    .lab-upload input { display:none; }
-
-    .lab-url { display:flex; gap:8px; margin-top:12px; }
-    .lab-url input { flex:1; padding:10px 14px; border:1px solid var(--line); border-radius:8px; background: var(--panel); color: var(--ink); font-size:14px; }
-    .lab-url input::placeholder { color: var(--muted); }
-
-    /* 预览区 */
-    .lab-preview { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px; }
-    .lab-preview-box { text-align:center; }
-    .lab-preview img { width:100%; aspect-ratio:4/3; min-height:340px; object-fit:cover; border-radius:10px; background: var(--bg); cursor:zoom-in; border:1px solid var(--line); transition: transform .15s; }
-    .lab-preview img:hover { transform: scale(1.01); }
-    .lab-preview .label { font-size:12px; color:var(--muted); margin-top:6px; }
-
-    /* 置信度卡片 */
-    .lab-confidence { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:14px; }
-    .lab-conf-card { background: var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; box-shadow: 0 1px 6px rgba(0,0,0,0.03); }
-    [data-theme="dark"] .lab-conf-card { box-shadow: 0 1px 6px rgba(0,0,0,0.2); }
-    .lab-conf-card strong { display:block; font-size:13px; margin-bottom:6px; color: var(--ink); }
-    .lab-conf-card span { display:block; font-size:12px; color:var(--muted); line-height:1.7; }
-
-    /* 参数面板 */
-    .lab-params { background: var(--panel); padding:20px; border-radius:12px; border:1px solid var(--line); box-shadow: 0 2px 12px rgba(0,0,0,0.04); }
-    [data-theme="dark"] .lab-params { box-shadow: 0 2px 12px rgba(0,0,0,0.25); }
-    .lab-params h3 { margin:0 0 16px; font-size:16px; font-weight:600; }
-
-    .lab-param { margin-bottom:14px; }
-    .lab-param label { display:flex; justify-content:space-between; font-size:13px; font-weight:500; margin-bottom:4px; color: var(--ink); }
-    .lab-param label span { color:var(--muted); font-variant-numeric:tabular-nums; }
-    .lab-param input[type=range] { width:100%; accent-color:var(--accent); }
-    .lab-param select { width:100%; padding:9px 12px; border:1px solid var(--line); border-radius:8px; background: var(--panel); color: var(--ink); font-size:14px; }
-    .lab-param .hint { font-size:11px; color:var(--muted); margin-top:2px; }
-
-    /* 按钮 */
-    .lab-btns { display:flex; gap:8px; margin-top:18px; }
-    .btn { border:1px solid var(--ink); background: var(--ink); color: var(--bg); padding:11px 18px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:500; transition: opacity .15s; }
-    .btn:hover { opacity: 0.85; }
-    .btn:disabled { opacity:0.4; cursor:not-allowed; }
-    .btn.secondary { background:transparent; color:var(--ink); border-color:var(--line); }
-    [data-theme="dark"] .btn { background: #e0e0e0; color: #1a1a1a; border-color: #e0e0e0; }
-    [data-theme="dark"] .btn.secondary { background: transparent; color: #e0e0e0; border-color: #555; }
-
-    .lab-presets { border-top:1px solid var(--line); margin-top:18px; padding-top:16px; }
-    .lab-presets-row { margin-bottom:10px; }
-    .lab-presets-row select { width:100%; padding:9px 12px; border:1px solid var(--line); border-radius:8px; background: var(--panel); color: var(--ink); font-size:14px; }
-    .lab-presets-actions { display:flex; gap:8px; }
-
-    .status-text { font-size:13px; color:var(--muted); margin-top:12px; line-height:1.5; }
-
-    /* 图片弹窗 */
-    .lab-image-modal { position:fixed; inset:0; z-index:30; display:grid; place-items:center; padding:24px; background:rgba(0,0,0,.85); }
+    body { margin:0; background: var(--bg); color: var(--ink); font-family: system-ui,-apple-system,sans-serif; -webkit-font-smoothing: antialiased; }
+    .lab-wrap { max-width:1200px; margin:0 auto; padding:36px 28px 56px; }
+    .lab-header { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:28px; padding-bottom:18px; border-bottom:2px solid var(--line); }
+    .lab-header h2 { margin:0; font-size:26px; font-weight:700; letter-spacing:-0.3px; }
+    .lab-header .lab-badge { font-size:12px; background:var(--accent-light); color:var(--accent); padding:4px 12px; border-radius:99px; font-weight:600; }
+    .lab-grid { display:grid; grid-template-columns: minmax(0,1.55fr) minmax(350px,1fr); gap:24px; }
+    .lab-card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px; box-shadow:0 1px 4px rgba(0,0,0,0.03); }
+    [data-theme="dark"] .lab-card { box-shadow:0 1px 8px rgba(0,0,0,0.3); }
+    .lab-dropzone { border:2px dashed var(--line); border-radius:16px; padding:38px 24px 32px; text-align:center; cursor:pointer; transition:all .25s; background:var(--panel); }
+    .lab-dropzone:hover { border-color:var(--accent); background:var(--accent-light); transform:translateY(-1px); box-shadow:0 4px 16px rgba(0,0,0,0.06); }
+    .lab-dropzone input { display:none; }
+    .lab-dropzone .dz-icon { font-size:42px; display:block; margin-bottom:10px; }
+    .lab-dropzone .dz-title { font-size:15px; font-weight:600; margin-bottom:4px; }
+    .lab-dropzone .dz-hint { font-size:12px; color:var(--muted); }
+    .lab-url-row { display:flex; gap:10px; margin-top:14px; }
+    .lab-url-row input { flex:1; padding:11px 14px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font-size:14px; transition:border-color .2s; }
+    .lab-url-row input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(31,122,90,0.1); }
+    .lab-url-row input::placeholder { color:var(--muted); }
+    .lab-preview { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:18px; }
+    .lab-preview-item { background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden; transition:box-shadow .2s; }
+    .lab-preview-item:hover { box-shadow:0 4px 20px rgba(0,0,0,0.08); }
+    .lab-preview-item img { display:block; width:100%; aspect-ratio:4/3; min-height:340px; object-fit:cover; cursor:zoom-in; background:var(--bg); }
+    .lab-preview-item .pv-label { display:flex; align-items:center; gap:8px; padding:10px 14px; font-size:12px; font-weight:600; color:var(--muted); border-top:1px solid var(--line); }
+    .lab-preview-item .pv-label::before { content:''; display:inline-block; width:8px; height:8px; border-radius:2px; }
+    .lab-preview-item.before .pv-label::before { background:var(--warn); }
+    .lab-preview-item.after .pv-label::before { background:var(--accent); }
+    .lab-confidence { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px; }
+    .lab-conf-widget { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; }
+    .lab-conf-widget .cw-title { font-size:12px; font-weight:600; color:var(--muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; }
+    .lab-conf-widget .cw-stat { font-size:28px; font-weight:700; line-height:1; margin-bottom:4px; }
+    .lab-conf-widget .cw-stat.danger { color:var(--warn); }
+    .lab-conf-widget .cw-stat.safe { color:var(--accent); }
+    .lab-conf-widget .cw-detail { font-size:12px; color:var(--muted); line-height:1.6; }
+    .lab-conf-widget .cw-bar { height:6px; border-radius:3px; background:var(--line); margin-top:10px; overflow:hidden; }
+    .lab-conf-widget .cw-bar-fill { height:100%; border-radius:3px; transition:width .4s ease; }
+    .cw-bar-fill.danger { background:var(--warn); }
+    .cw-bar-fill.safe { background:var(--accent); }
+    .lab-params { background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 1px 6px rgba(0,0,0,0.03); overflow:hidden; }
+    [data-theme="dark"] .lab-params { box-shadow:0 1px 12px rgba(0,0,0,0.28); }
+    .lab-params-head { padding:18px 22px; border-bottom:1px solid var(--line); }
+    .lab-params-head h3 { margin:0; font-size:15px; font-weight:600; }
+    .lab-params-body { padding:18px 22px; }
+    .lab-param { margin-bottom:16px; }
+    .lab-param:last-child { margin-bottom:0; }
+    .lab-param label { display:flex; justify-content:space-between; align-items:center; font-size:13px; font-weight:500; margin-bottom:5px; color:var(--ink); }
+    .lab-param label span { color:var(--ink); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums; background:var(--bg); padding:2px 8px; border-radius:5px; min-width:36px; text-align:center; }
+    .lab-param input[type=range] { width:100%; height:6px; accent-color:var(--accent); border-radius:3px; }
+    .lab-param select { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font-size:14px; cursor:pointer; }
+    .lab-param .hint { font-size:11px; color:var(--muted); margin-top:3px; }
+    .lab-btns { display:flex; gap:10px; margin-top:18px; }
+    .btn { border:none; padding:12px 20px; border-radius:10px; cursor:pointer; font-size:14px; font-weight:600; transition:all .15s; display:inline-flex; align-items:center; gap:6px; }
+    .btn.primary { background:var(--accent); color:#fff; }
+    .btn.primary:hover { filter:brightness(1.1); transform:translateY(-1px); box-shadow:0 4px 14px rgba(31,122,90,0.25); }
+    .btn.primary:active { transform:translateY(0); }
+    .btn.secondary { background:transparent; color:var(--ink); border:1px solid var(--line); }
+    .btn.secondary:hover { background:var(--bg); border-color:var(--ink); }
+    .btn:disabled { opacity:0.35; cursor:not-allowed; transform:none !important; box-shadow:none !important; }
+    [data-theme="dark"] .btn.secondary { border-color:#555; }
+    [data-theme="dark"] .btn.secondary:hover { border-color:#888; }
+    .lab-presets { border-top:1px solid var(--line); margin-top:18px; padding-top:18px; }
+    .lab-presets h4 { margin:0 0 10px; font-size:13px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; }
+    .lab-presets-row select { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font-size:14px; }
+    .lab-presets-actions { display:flex; gap:8px; margin-top:10px; }
+    .status-text { font-size:13px; color:var(--muted); margin-top:14px; line-height:1.5; padding:10px 14px; background:var(--bg); border-radius:8px; }
+    .lab-image-modal { position:fixed; inset:0; z-index:30; display:grid; place-items:center; padding:24px; background:rgba(0,0,0,.88); backdrop-filter:blur(4px); }
     .lab-image-modal[hidden] { display:none; }
-    .lab-image-modal img { max-width:96vw; max-height:90vh; border-radius:8px; }
-    .lab-image-modal-close { position:fixed; top:12px; right:18px; border:0; background:transparent; color:white; font-size:32px; cursor:pointer; }
-
-    @media (max-width:768px) { .lab-grid,.lab-preview,.lab-confidence { grid-template-columns:1fr; } .lab-wrap { padding:20px 16px 32px; } }
-
-    .spinner { display:inline-block; width:16px; height:16px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin .6s linear infinite; vertical-align:middle; margin-right:6px; }
+    .lab-image-modal img { max-width:94vw; max-height:88vh; border-radius:12px; box-shadow:0 8px 40px rgba(0,0,0,0.4); }
+    .lab-image-modal-close { position:fixed; top:16px; right:20px; border:0; background:rgba(255,255,255,0.12); color:white; width:40px; height:40px; border-radius:8px; font-size:22px; cursor:pointer; transition:background .15s; }
+    .lab-image-modal-close:hover { background:rgba(255,255,255,0.22); }
+    @media (max-width:768px) { .lab-grid,.lab-preview,.lab-confidence { grid-template-columns:1fr; } .lab-wrap { padding:24px 16px 40px; } .lab-header { flex-direction:column; align-items:flex-start; gap:10px; } }
+    .spinner { display:inline-block; width:16px; height:16px; border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin .6s linear infinite; }
     @keyframes spin { to { transform:rotate(360deg); } }
     </style>
 </head>
 <body>
     <div class="lab-wrap">
-      <h2>🧪 打码实验室</h2>
-      <p class="lab-subtitle">独立打码测试环境，参数调试后可同步到全局设置</p>
+      <div class="lab-header">
+        <h2>🧪 打码实验室</h2>
+        <span class="lab-badge">独立测试环境</span>
+      </div>
       <div class="lab-grid">
         <div>
-          <div class="hint" style="margin-bottom:12px">已使用管理页授权</div>
-    <div class="lab-upload" onclick="document.getElementById('lab-file').click()" id="lab-drop">
-            📁 点击上传图片 或拖拽到此处<br><small style="color:var(--text-dim)">支持 JPG/PNG/WebP, 最大 20MB</small>
+          <div class="lab-dropzone" onclick="document.getElementById('lab-file').click()" id="lab-drop">
+            <span class="dz-icon">🖼️</span>
+            <div class="dz-title">点击上传图片 或拖拽到此处</div>
+            <div class="dz-hint">JPG / PNG / WebP · 最大 20MB</div>
             <input type="file" id="lab-file" accept="image/*" onchange="labUpload(this)" />
           </div>
-          <div class="lab-url">
-            <input id="lab-url" type="url" placeholder="或粘贴图片 URL..." onkeydown="if(event.key==='Enter')labTest()" />
+          <div class="lab-url-row">
+            <input id="lab-url" type="url" placeholder="🔗  或粘贴图片 URL..." onkeydown="if(event.key==='Enter')labTest()" />
           </div>
           <div class="lab-preview" id="lab-preview">
-            <div><img id="lab-before" style="display:none" onclick="labOpenPreview(this)" /><div class="label">原图</div></div>
-            <div><img id="lab-after" style="display:none" onclick="labOpenPreview(this)" /><div class="label">打码结果<span id="lab-face-info"></span></div></div>
+            <div class="lab-preview-item before">
+              <img id="lab-before" style="display:none" onclick="labOpenPreview(this)" />
+              <div class="pv-label">📷 原图</div>
+            </div>
+            <div class="lab-preview-item after">
+              <img id="lab-after" style="display:none" onclick="labOpenPreview(this)" />
+              <div class="pv-label">✨ 打码结果<span id="lab-face-info"></span></div>
+            </div>
           </div>
           <div class="lab-confidence" id="lab-confidence" hidden>
-            <div class="lab-conf-card"><strong>原图人脸置信度</strong><span id="lab-confidence-before">-</span></div>
-            <div class="lab-conf-card"><strong>打码后人脸置信度</strong><span id="lab-confidence-after">-</span></div>
+            <div class="lab-conf-widget">
+              <div class="cw-title">原图人脸检测</div>
+              <div class="cw-stat danger" id="lab-conf-before-stat">-</div>
+              <div class="cw-detail" id="lab-confidence-before">-</div>
+              <div class="cw-bar"><div class="cw-bar-fill danger" id="lab-conf-before-bar" style="width:0%"></div></div>
+            </div>
+            <div class="lab-conf-widget">
+              <div class="cw-title">打码后人脸检测</div>
+              <div class="cw-stat safe" id="lab-conf-after-stat">-</div>
+              <div class="cw-detail" id="lab-confidence-after">-</div>
+              <div class="cw-bar"><div class="cw-bar-fill safe" id="lab-conf-after-bar" style="width:0%"></div></div>
+            </div>
           </div>
         </div>
         <div class="lab-params">
-          <h3>打码参数</h3>
-          <div class="lab-param">
-            <label>打码模式</label>
-            <select id="lab-mode" onchange="labToggleMode()">
-              <option value="landmark_whole_face">整脸红点遮罩</option>
-              <option value="landmark">关键点遮罩</option>
-              <option value="pixelate">马赛克</option>
-              <option value="gaussian">高斯模糊</option>
-              <option value="solid">纯色遮挡</option>
-            </select>
-          </div>
-          <div class="lab-param"><label>检测阈值 <span id="lab-score-v">0.52</span></label><input type="range" id="lab-score" min="0.3" max="1.0" step="0.01" value="0.52" oninput="document.getElementById('lab-score-v').textContent=this.value" /><div class="hint">越小越灵敏，可能有误检</div></div>
-          <div class="lab-param"><label>扩框比例 <span id="lab-expand-v">0.30</span></label><input type="range" id="lab-expand" min="0" max="1.0" step="0.05" value="0.30" oninput="document.getElementById('lab-expand-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">检测框向外扩展的安全余量</div></div>
-          <div class="lab-param"><label>跳小脸(px) <span id="lab-minface-v">50</span></label><input type="range" id="lab-minface" min="0" max="500" step="5" value="50" oninput="document.getElementById('lab-minface-v').textContent=this.value" /><div class="hint">脸宽小于此值直接跳过, 0=全部打码</div></div>
-          <div class="lab-param"><label>网格间距 <span id="lab-step-v">14</span></label><input type="range" id="lab-step" min="4" max="40" step="1" value="14" oninput="document.getElementById('lab-step-v').textContent=this.value; labStepChanged()" /><div class="hint">越小越密集</div></div>
-          <div class="lab-param"><label>红点半径 <span id="lab-dot-v">3</span></label><input type="range" id="lab-dot" min="1" max="10" step="1" value="3" oninput="document.getElementById('lab-dot-v').textContent=this.value" /><div class="hint">红点大小(px)</div></div>
-          <div class="lab-param"><label>网格密度N <span id="lab-n-v">5</span></label><input type="range" id="lab-n" min="1" max="9" step="1" value="5" oninput="document.getElementById('lab-n-v').textContent=this.value" /><div class="hint">关键点周围叠加层数</div></div>
-          <div class="lab-btns">
-            <button class="btn primary" onclick="labTest()" id="lab-test-btn">🧪 执行打码</button>
-            <button class="btn secondary" onclick="labSyncGlobal()" id="lab-sync-btn" disabled>📋 同步到全局设置</button>
-          </div>
-          <div class="lab-presets">
-            <h3>自定义预设</h3>
-            <div class="lab-presets-row">
-              <select id="lab-preset" aria-label="选择参数预设" onchange="labApplyPreset(this.value)">
-                <option value="">选择预设...</option>
+          <div class="lab-params-head"><h3>⚙️ 打码参数</h3></div>
+          <div class="lab-params-body">
+            <div class="lab-param">
+              <label>打码模式</label>
+              <select id="lab-mode" onchange="labToggleMode()">
+                <option value="landmark_whole_face">整脸红点遮罩</option>
+                <option value="landmark">关键点遮罩</option>
+                <option value="pixelate">马赛克</option>
+                <option value="gaussian">高斯模糊</option>
+                <option value="solid">纯色遮挡</option>
               </select>
             </div>
-            <div class="lab-presets-actions">
-              <button class="btn secondary" type="button" onclick="labSavePreset()">保存当前参数</button>
-              <button class="btn secondary" type="button" onclick="labDeletePreset()" id="lab-delete-preset" disabled>删除预设</button>
-              <button class="btn secondary" type="button" onclick="labResetDefaults()">恢复默认值</button>
+            <div class="lab-param"><label>检测阈值 <span id="lab-score-v">0.52</span></label><input type="range" id="lab-score" min="0.3" max="1.0" step="0.01" value="0.52" oninput="document.getElementById('lab-score-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">越小越灵敏，可能有误检</div></div>
+            <div class="lab-param"><label>扩框比例 <span id="lab-expand-v">0.30</span></label><input type="range" id="lab-expand" min="0" max="1.0" step="0.05" value="0.30" oninput="document.getElementById('lab-expand-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">检测框向外扩展的安全余量</div></div>
+            <div class="lab-param"><label>跳小脸(px) <span id="lab-minface-v">50</span></label><input type="range" id="lab-minface" min="0" max="500" step="5" value="50" oninput="document.getElementById('lab-minface-v').textContent=this.value" /><div class="hint">脸宽小于此值直接跳过，0=全部打码</div></div>
+            <div class="lab-param"><label>网格间距 <span id="lab-step-v">14</span></label><input type="range" id="lab-step" min="4" max="40" step="1" value="14" oninput="document.getElementById('lab-step-v').textContent=this.value; labStepChanged()" /><div class="hint">越小越密集</div></div>
+            <div class="lab-param"><label>红点半径 <span id="lab-dot-v">3</span></label><input type="range" id="lab-dot" min="1" max="10" step="1" value="3" oninput="document.getElementById('lab-dot-v').textContent=this.value" /><div class="hint">红点大小(px)</div></div>
+            <div class="lab-param"><label>网格密度N <span id="lab-n-v">5</span></label><input type="range" id="lab-n" min="1" max="9" step="1" value="5" oninput="document.getElementById('lab-n-v').textContent=this.value" /><div class="hint">关键点周围叠加层数</div></div>
+            <div class="lab-btns">
+              <button class="btn primary" onclick="labTest()" id="lab-test-btn">🚀 执行打码</button>
+              <button class="btn secondary" onclick="labSyncGlobal()" id="lab-sync-btn" disabled>📋 同步到全局</button>
             </div>
+            <div class="lab-presets">
+              <h4>自定义预设</h4>
+              <div class="lab-presets-row">
+                <select id="lab-preset" onchange="labApplyPreset(this.value)"><option value="">选择预设...</option></select>
+              </div>
+              <div class="lab-presets-actions">
+                <button class="btn secondary" onclick="labSavePreset()">💾 保存当前</button>
+                <button class="btn secondary" onclick="labDeletePreset()" id="lab-delete-preset" disabled>🗑 删除</button>
+                <button class="btn secondary" onclick="labResetDefaults()">↩ 恢复默认</button>
+              </div>
+            </div>
+            <p id="lab-status" class="status-text"></p>
           </div>
-          <p id="lab-status" class="status-text"></p>
         </div>
       </div>
     </div>
@@ -1348,12 +1353,17 @@ async function labTest(){
     af.src = "data:image/jpeg;base64," + d.output_base64;
     af.style.display = "";
     document.getElementById("lab-face-info").textContent = " (" + d.face_count + "张脸, " + (d.elapsed_ms||0).toFixed(0) + "ms)";
-    const confidenceText = value => {
-      const scores = value.scores || [];
-      return value.face_count + " 张脸 · 最高 " + (value.max_score * 100).toFixed(1) + "% · 平均 " + (value.avg_score * 100).toFixed(1) + "%" + (scores.length ? " · 明细 " + scores.map(score => (score * 100).toFixed(1) + "%").join("、") : "");
+    const updateConfWidget = (prefix, value) => {
+      const avgPct = (value.avg_score * 100).toFixed(1);
+      const elStat = document.getElementById('lab-conf-' + prefix + '-stat');
+      const elDetail = document.getElementById('lab-confidence-' + prefix);
+      const elBar = document.getElementById('lab-conf-' + prefix + '-bar');
+      if(elStat) elStat.textContent = value.face_count + ' 张脸';
+      if(elDetail) elDetail.textContent = '最高 ' + (value.max_score * 100).toFixed(1) + '% · 平均 ' + avgPct + '%' + (value.scores && value.scores.length ? ' · 明细 ' + value.scores.map(s => (s*100).toFixed(1) + '%').join('、') : '');
+      if(elBar) elBar.style.width = avgPct + '%';
     };
-    document.getElementById("lab-confidence-before").textContent = confidenceText(d.confidence.before);
-    document.getElementById("lab-confidence-after").textContent = confidenceText(d.confidence.after);
+    updateConfWidget('before', d.confidence.before);
+    updateConfWidget('after', d.confidence.after);
     document.getElementById("lab-confidence").hidden = false;
     document.getElementById("lab-status").textContent = "✓ 完成";
     document.getElementById("lab-sync-btn").disabled = false;
