@@ -122,6 +122,17 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('/api/admin/tasks/${encodeURIComponent(taskId)}', ADMIN_HTML)
         self.assertIn('x.task_id', ADMIN_HTML)
 
+    def test_parent_task_search_resets_and_refreshes_the_active_gallery(self):
+        self.assertIn("const isTaskId = /^[0-9a-f]{32}$/i.test(q);", ADMIN_HTML)
+        self.assertNotIn('if(!q) return;', ADMIN_HTML)
+        self.assertIn('galleryPage = 1;', ADMIN_HTML)
+        self.assertIn("if(activeTab === 'gallery') loadGalleryPage();", ADMIN_HTML)
+
+    def test_request_pagination_defaults_to_twenty_everywhere(self):
+        self.assertIn('<option value="20" selected>20</option>', ADMIN_HTML)
+        self.assertIn('let requestPageSize = 20;', ADMIN_HTML)
+        self.assertIn('limit: int = Query(20, ge=10, le=200)', APP_SOURCE)
+
     def test_request_api_returns_page_metadata(self):
         self.assertIn('offset: int = Query(0, ge=0)', APP_SOURCE)
         self.assertIn('"total": total', APP_SOURCE)
