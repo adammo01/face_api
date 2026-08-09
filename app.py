@@ -2254,12 +2254,14 @@ ADMIN_HTML = """
         <a href="/admin" style="text-decoration:none;color:inherit"><h1>FaceBlur Admin</h1></a>
         <div class="sub">Live request log, static image storage, cleanup control</div>
       </div>
+      <div class="search-center" style="flex:1;display:flex;justify-content:center;align-items:center;gap:8px">
+        <input id="task-search" type="search" placeholder="输入任务 ID 定位..." aria-label="任务 ID" style="width:240px;padding:9px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font-size:13px" />
+        <button class="btn secondary" onclick="findTask()" style="white-space:nowrap">查询</button>
+      </div>
       <div class="auth">
         <input id="token" type="password" placeholder="Admin token" autocomplete="off" />
         <button class="btn" onclick="saveToken()">保存</button>
         <button class="btn secondary" onclick="loadAll()">刷新</button>
-        <input id="task-search" type="search" placeholder="输入任务 ID 定位" aria-label="任务 ID" style="width:160px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font-size:13px" />
-        <button class="btn secondary" onclick="findTask()" style="white-space:nowrap">查询</button>
         <button id="themeToggle" class="btn secondary" title="切换深色模式" onclick="toggleTheme()" style="font-size:16px">🌙</button>
       </div>
     </header>
