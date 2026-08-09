@@ -281,7 +281,10 @@ class TaskTrackingTests(unittest.TestCase):
             'image_bytes': b'blurred-image',
             'face_count': 2,
             'elapsed_ms': 4.0,
-            'faces': [{'score': 0.91}, {'score': 0.73}],
+            'faces': [
+                {'x': 180, 'y': 30, 'w': 40, 'h': 50, 'score': 0.91, 'landmarks': {}},
+                {'x': 20, 'y': 10, 'w': 30, 'h': 35, 'score': 0.73, 'landmarks': {'nose': (30, 25)}},
+            ],
         }
         after = {
             'image_bytes': b'probe-image',
@@ -307,6 +310,9 @@ class TaskTrackingTests(unittest.TestCase):
         self.assertEqual(confidence['before']['face_count'], 2)
         self.assertEqual(confidence['before']['max_score'], 0.91)
         self.assertEqual(confidence['before']['avg_score'], 0.82)
+        self.assertEqual(confidence['before']['faces'][0]['x'], 20)
+        self.assertEqual(confidence['before']['faces'][0]['width'], 30)
+        self.assertEqual(confidence['before']['faces'][0]['landmark_count'], 1)
         self.assertEqual(confidence['after']['face_count'], 1)
         self.assertEqual(confidence['after']['max_score'], 0.55)
         self.assertEqual(process_mock.call_count, 2)

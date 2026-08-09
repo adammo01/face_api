@@ -1158,6 +1158,12 @@ def lab_page(request: Request):
     .lab-preview-item.before .pv-label::before { background:var(--warn); }
     .lab-preview-item.after .pv-label::before { background:var(--accent); }
     .lab-confidence { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px; }
+    .lab-detection-details { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }
+    .lab-detection-panel { border:1px solid var(--line); background:var(--panel); padding:13px; }
+    .lab-detection-panel h4 { margin:0 0 9px; font-size:13px; }
+    .lab-face-detail { padding:8px 0; border-top:1px solid var(--line); font:12px ui-monospace,monospace; line-height:1.55; }
+    .lab-face-detail:first-of-type { border-top:0; }
+    .lab-face-detail strong { color:var(--accent); }
     .lab-conf-widget { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; }
     .lab-conf-widget .cw-title { font-size:12px; font-weight:600; color:var(--muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px; }
     .lab-conf-widget .cw-stat { font-size:28px; font-weight:700; line-height:1; margin-bottom:4px; }
@@ -1207,7 +1213,7 @@ def lab_page(request: Request):
     .lab-image-modal img { max-width:94vw; max-height:88vh; border-radius:12px; box-shadow:0 8px 40px rgba(0,0,0,0.4); transform-origin: center center; touch-action: none; }
     .lab-image-modal-close { position:fixed; top:16px; right:20px; border:0; background:rgba(255,255,255,0.12); color:white; width:40px; height:40px; border-radius:8px; font-size:22px; cursor:pointer; transition:background .15s; }
     .lab-image-modal-close:hover { background:rgba(255,255,255,0.22); }
-    @media (max-width:768px) { .lab-grid,.lab-preview,.lab-confidence,.lab-mode-options { grid-template-columns:1fr; } .lab-wrap { padding:24px 16px 40px; } .lab-header { flex-direction:column; align-items:flex-start; gap:10px; } }
+    @media (max-width:768px) { .lab-grid,.lab-preview,.lab-confidence,.lab-detection-details,.lab-mode-options { grid-template-columns:1fr; } .lab-wrap { padding:24px 16px 40px; } .lab-header { flex-direction:column; align-items:flex-start; gap:10px; } }
     .spinner { display:inline-block; width:16px; height:16px; border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin .6s linear infinite; }
     @keyframes spin { to { transform:rotate(360deg); } }
     </style>
@@ -1253,6 +1259,10 @@ def lab_page(request: Request):
               <div class="cw-detail" id="lab-confidence-after">-</div>
               <div class="cw-bar"><div class="cw-bar-fill safe" id="lab-conf-after-bar" style="width:0%"></div></div>
             </div>
+          </div>
+          <div class="lab-detection-details" id="lab-detection-details" hidden>
+            <section class="lab-detection-panel"><h4>原图逐脸明细（从左到右）</h4><div id="lab-detections-before"></div></section>
+            <section class="lab-detection-panel"><h4>打码后逐脸明细（从左到右）</h4><div id="lab-detections-after"></div></section>
           </div>
         </div>
         <div class="lab-params">
@@ -1356,6 +1366,7 @@ async function labUpload(input){
   bf.src = u; bf.style.display = "";
   document.getElementById("lab-after").style.display = "none";
   document.getElementById("lab-confidence").hidden = true;
+  document.getElementById("lab-detection-details").hidden = true;
   document.getElementById("lab-status").textContent = "图片已就绪, 点击「执行打码」";
   document.getElementById("lab-url").value = "";
   document.getElementById("lab-sync-btn").disabled = true;
@@ -1385,6 +1396,16 @@ async function labCopyOutputLink(){
   if(!url) return;
   try { await navigator.clipboard.writeText(url); document.getElementById("lab-status").textContent = "✓ 公网短链接已复制"; }
   catch(e) { document.getElementById("lab-status").textContent = "✗ 无法自动复制，请手动复制链接"; }
+}
+function labRenderDetectionDetails(targetId, faces){
+  const target = document.getElementById(targetId);
+  if(!faces || !faces.length){ target.textContent = "未检测到人脸"; return; }
+  target.innerHTML = faces.map(face => {
+    const score = (Number(face.score || 0) * 100).toFixed(1);
+    return '<div class="lab-face-detail"><strong>脸 #' + Number(face.index || 0) + '</strong> · 置信度 ' + score + '%<br>' +
+      '位置 x=' + Number(face.x || 0) + ', y=' + Number(face.y || 0) + ' · 大小 ' + Number(face.width || 0) + ' × ' + Number(face.height || 0) + ' px<br>' +
+      '面积 ' + Number(face.area || 0) + ' px² · 中心 (' + Number(face.center_x || 0) + ', ' + Number(face.center_y || 0) + ') · 关键点 ' + Number(face.landmark_count || 0) + ' 个 · ' + labEscapeHtml(face.source || 'yunet') + '</div>';
+  }).join('');
 }
 function labReadPresets(){
   try { const value = JSON.parse(localStorage.getItem(LAB_PRESETS_KEY) || "{}"); return value && typeof value === "object" ? value : {}; }
@@ -1474,6 +1495,7 @@ async function labTest(){
   btn.innerHTML = '<span class="spinner"></span>处理中...';
   document.getElementById("lab-status").textContent = "正在提交打码请求...";
   document.getElementById("lab-confidence").hidden = true;
+  document.getElementById("lab-detection-details").hidden = true;
   document.getElementById("lab-output-link").hidden = true;
   try {
     const body = {mode: m, modes: params.modes, face_profiles: params.face_profiles,
@@ -1506,7 +1528,10 @@ async function labTest(){
     };
     updateConfWidget('before', d.confidence.before);
     updateConfWidget('after', d.confidence.after);
+    labRenderDetectionDetails('lab-detections-before', d.confidence.before.faces);
+    labRenderDetectionDetails('lab-detections-after', d.confidence.after.faces);
     document.getElementById("lab-confidence").hidden = false;
+    document.getElementById("lab-detection-details").hidden = false;
     document.getElementById("lab-status").textContent = "✓ 已重新处理 · 任务 ID: " + (d.task_id || runId);
     document.getElementById("lab-sync-btn").disabled = false;
     if(!b64 && url){
@@ -1701,18 +1726,33 @@ main{max-width:960px;margin:0 auto;padding:36px 22px 60px}h1{margin:0 0 8px;font
 """)
 
 def _confidence_summary(faces: list) -> dict:
-    scores = []
+    details = []
     for face in faces:
         try:
-            score = float(face.get("score", 0)) if isinstance(face, dict) else float(face.score)
+            value = face if isinstance(face, dict) else vars(face)
+            x, y = int(value.get("x", 0)), int(value.get("y", 0))
+            w, h = int(value.get("w", 0)), int(value.get("h", 0))
+            score = round(max(0.0, min(1.0, float(value.get("score", 0)))), 4)
         except (TypeError, ValueError, AttributeError):
             continue
-        scores.append(round(max(0.0, min(1.0, score)), 4))
+        landmarks = value.get("landmarks") or {}
+        details.append({
+            "x": x, "y": y, "width": w, "height": h,
+            "area": max(0, w) * max(0, h),
+            "center_x": x + w // 2, "center_y": y + h // 2,
+            "score": score, "source": value.get("source") or "yunet",
+            "landmark_count": len(landmarks) if isinstance(landmarks, dict) else 0,
+        })
+    details.sort(key=lambda item: (item["x"], item["y"]))
+    for index, item in enumerate(details, 1):
+        item["index"] = index
+    scores = [item["score"] for item in details]
     return {
-        "face_count": len(scores),
+        "face_count": len(details),
         "max_score": max(scores, default=0.0),
         "avg_score": round(sum(scores) / len(scores), 4) if scores else 0.0,
         "scores": scores,
+        "faces": details,
     }
 
 

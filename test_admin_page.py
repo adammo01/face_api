@@ -121,6 +121,12 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('d.confidence.after', APP_SOURCE)
         self.assertIn('"confidence": {"threshold": req.score_threshold', APP_SOURCE)
 
+    def test_lab_shows_per_face_detection_details(self):
+        self.assertIn('id="lab-detection-details"', APP_SOURCE)
+        self.assertIn('function labRenderDetectionDetails(', APP_SOURCE)
+        self.assertIn('从左到右', APP_SOURCE)
+        self.assertIn('"landmark_count"', APP_SOURCE)
+
     def test_lab_runs_are_explicitly_unique_and_uncached(self):
         self.assertIn('opts.cache = "no-store"', APP_SOURCE)
         self.assertIn('X-Lab-Run-Id', APP_SOURCE)
