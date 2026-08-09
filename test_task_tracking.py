@@ -182,8 +182,18 @@ class TaskTrackingTests(unittest.TestCase):
         self.assertEqual(first_kwargs['min_face_skip'], 75)
         self.assertEqual(first_kwargs['face_grid_step'], 16)
         self.assertEqual(first_kwargs['grid_n'], 7)
+        self.assertFalse(first_kwargs['adaptive'])
         self.assertEqual(second_kwargs['score_threshold'], 0.45)
         self.assertEqual(second_kwargs['min_face_skip'], 20)
+
+        with patch.object(self.module, '_download', return_value=b'input-image'), \
+                patch.object(self.module, 'process_image', return_value=processed) as landmark_mock:
+            response = self.client.post(
+                '/api/face_blur',
+                json={'image_url': 'https://example.com/landmark-spacing.jpg', 'mode': 'landmark'},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(landmark_mock.call_args.kwargs['spacing'], 16)
 
         loaded = self.client.get(
             '/api/admin/settings', headers={'X-Admin-Token': 'test-admin'}
@@ -266,7 +276,7 @@ class TaskTrackingTests(unittest.TestCase):
             response = self.client.post(
                 '/api/lab/test',
                 headers={'X-Admin-Token': 'test-admin'},
-                json={'image_base64': image_b64, 'mode': 'gaussian', 'score_threshold': 0.52},
+                json={'image_base64': image_b64, 'mode': 'landmark_whole_face', 'score_threshold': 0.52},
             )
         self.assertEqual(response.status_code, 200)
         confidence = response.json()['confidence']
@@ -277,6 +287,7 @@ class TaskTrackingTests(unittest.TestCase):
         self.assertEqual(confidence['after']['face_count'], 1)
         self.assertEqual(confidence['after']['max_score'], 0.55)
         self.assertEqual(process_mock.call_count, 2)
+        self.assertFalse(process_mock.call_args_list[0].kwargs.get('adaptive', True))
 
     def test_validation_failure_is_recorded_with_task_id(self):
         response = self.client.post(

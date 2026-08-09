@@ -1605,7 +1605,7 @@ def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None =
     blur_params = {}
     if req.mode == "landmark_whole_face":
         blur_params.update({
-            "adaptive": True, "min_face_skip": req.min_face_skip if req.min_face_skip is not None else 50,
+            "adaptive": False, "min_face_skip": req.min_face_skip if req.min_face_skip is not None else 50,
             "dot_radius": req.dot_radius, "face_grid_step": req.face_grid_step,
             "grid_n": req.grid_n or 5, "spacing": req.face_grid_step,
         })
@@ -1816,7 +1816,7 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
         blur_params: dict = {}
         if req.mode == "landmark":
             blur_params["dot_radius"] = params["dot_radius"]
-            blur_params["spacing"] = req.spacing
+            blur_params["spacing"] = req.spacing if "spacing" in req.model_fields_set else params["face_grid_step"]
         elif req.mode == "landmark_whole_face":
             blur_params["dot_radius"] = params["dot_radius"]
             blur_params["spacing"] = req.spacing if "spacing" in req.model_fields_set else params["face_grid_step"]
@@ -1830,7 +1830,7 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
                 score_threshold=params["score_threshold"],
                 expand_ratio=params["expand_ratio"],
                 return_faces=True,
-                adaptive=True, min_face_skip=params["min_face_skip"],
+                adaptive=False, min_face_skip=params["min_face_skip"],
                 **blur_params,
             ),
             max_retries=max_retries,
