@@ -1051,7 +1051,7 @@ def lab_page(request: Request):
     }
     * { box-sizing: border-box; }
     body { margin:0; background: var(--bg); color: var(--ink); font-family: system-ui,-apple-system,sans-serif; -webkit-font-smoothing: antialiased; }
-    .lab-wrap { max-width:1200px; margin:0 auto; padding:28px 28px 40px; }
+    .lab-wrap { max-width:none; margin:0 auto; padding:28px 100px 40px; }
     .lab-header { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:20px; padding-bottom:14px; border-bottom:2px solid var(--line); }
     .lab-header h2 { margin:0; font-size:26px; font-weight:700; letter-spacing:-0.3px; }
     .lab-header .lab-badge { font-size:12px; background:var(--accent-light); color:var(--accent); padding:4px 12px; border-radius:99px; font-weight:600; }
