@@ -708,7 +708,7 @@ class FaceBlurRequest(BaseModel):
     # landmark_whole_face 模式专用参数
     face_grid_step: int = Field(14, ge=4, le=60)
     grid_n: int = Field(5, ge=3, le=11, description="关键点附近矩阵大小 (建议 3-7)")
-    min_face_skip: int = Field(50, ge=0, le=500, description="极小人脸跳过阈值")
+    min_face_skip: int = Field(40, ge=0, le=500, description="极小人脸跳过阈值")
     parent_task_id: Optional[str] = Field(None, max_length=200, description="上游任务批次标记")
     image_base64: Optional[str] = Field(None, description="Base64 image for lab test")
     callback_url: Optional[HttpUrl] = None
@@ -1146,7 +1146,7 @@ def lab_page(request: Request):
 const BASE = window.location.origin;
 const LAB_TOKEN = new URLSearchParams(location.search).get("token") || "";
 const LAB_PRESETS_KEY = "faceblur.lab.presets.v1";
-const LAB_DEFAULTS = {mode:"landmark_whole_face", score_threshold:0.52, expand_ratio:0.30, min_face_skip:50, face_grid_step:14, dot_radius:3, grid_n:5};
+const LAB_DEFAULTS = {mode:"landmark_whole_face", score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5};
 async function apiLab(path, opts={}){
   if(LAB_TOKEN){ opts.headers = opts.headers || {}; opts.headers["X-Admin-Token"] = LAB_TOKEN; }
   const r = await fetch(BASE+path, opts);
