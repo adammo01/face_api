@@ -127,6 +127,12 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('"task_id": task_id', APP_SOURCE)
         self.assertIn('已重新处理 · 任务 ID:', APP_SOURCE)
 
+    def test_lab_returns_a_public_short_link_for_output(self):
+        self.assertIn('@app.get("/i/{image_id}")', APP_SOURCE)
+        self.assertIn('def _short_url_for(', APP_SOURCE)
+        self.assertIn('id="lab-output-link"', APP_SOURCE)
+        self.assertIn('function labCopyOutputLink()', APP_SOURCE)
+
     def test_lab_defaults_do_not_override_selected_global_mode(self):
         self.assertIn('const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:[]', APP_SOURCE)
         self.assertIn('function labModeChanged(input)', APP_SOURCE)

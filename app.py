@@ -63,7 +63,7 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, HttpUrl, model_validator
 from typing import Optional
@@ -1090,9 +1090,24 @@ def _public_url_for(path: Path, request_base: str) -> str:
     return f"{request_base}static/{rel}"
 
 
+def _short_url_for(image_id: str, request_base: str) -> str:
+    base = PUBLIC_BASE_URL.rstrip("/") if PUBLIC_BASE_URL else request_base.rstrip("/")
+    return f"{base}/i/{image_id}"
+
+
 # ---------------------------------------------------------------------------
 # 路由
 # ---------------------------------------------------------------------------
+
+@app.get("/i/{image_id}")
+def short_image(image_id: str):
+    """实验室结果图片的公开短链接。"""
+    if len(image_id) != 12 or any(ch not in "0123456789abcdef" for ch in image_id):
+        raise HTTPException(404, "image not found")
+    path = STATIC_DIR / f"lab_{image_id}.jpg"
+    if not path.is_file():
+        raise HTTPException(404, "image not found")
+    return FileResponse(path, media_type="image/jpeg")
 
 @app.get("/lab")
 def lab_page(request: Request):
@@ -1224,6 +1239,7 @@ def lab_page(request: Request):
               <div class="pv-label">✨ 打码结果<span id="lab-face-info"></span></div>
             </div>
           </div>
+          <div class="status-text" id="lab-output-link" hidden>公网短链接：<a id="lab-output-url" target="_blank" rel="noopener"></a> <button class="btn secondary" type="button" style="padding:4px 8px;font-size:12px" onclick="labCopyOutputLink()">复制链接</button></div>
           <div class="lab-confidence" id="lab-confidence" hidden>
             <div class="lab-conf-widget">
               <div class="cw-title">原图人脸检测</div>
@@ -1364,6 +1380,12 @@ function labFillProfileExample(){
   document.getElementById("lab-profiles").value = JSON.stringify(LAB_PROFILE_EXAMPLE, null, 2);
   document.getElementById("lab-status").textContent = "✓ 已填入小脸 / 中脸 / 大脸三档示例，可直接修改数值或模式";
 }
+async function labCopyOutputLink(){
+  const url = document.getElementById("lab-output-url").href;
+  if(!url) return;
+  try { await navigator.clipboard.writeText(url); document.getElementById("lab-status").textContent = "✓ 公网短链接已复制"; }
+  catch(e) { document.getElementById("lab-status").textContent = "✗ 无法自动复制，请手动复制链接"; }
+}
 function labReadPresets(){
   try { const value = JSON.parse(localStorage.getItem(LAB_PRESETS_KEY) || "{}"); return value && typeof value === "object" ? value : {}; }
   catch(e) { return {}; }
@@ -1452,6 +1474,7 @@ async function labTest(){
   btn.innerHTML = '<span class="spinner"></span>处理中...';
   document.getElementById("lab-status").textContent = "正在提交打码请求...";
   document.getElementById("lab-confidence").hidden = true;
+  document.getElementById("lab-output-link").hidden = true;
   try {
     const body = {mode: m, modes: params.modes, face_profiles: params.face_profiles,
       score_threshold: Number(document.getElementById("lab-score").value),
@@ -1467,6 +1490,10 @@ async function labTest(){
     const af = document.getElementById("lab-after");
     af.src = "data:image/jpeg;base64," + d.output_base64;
     af.style.display = "";
+    const outputUrl = document.getElementById("lab-output-url");
+    outputUrl.href = d.output_url;
+    outputUrl.textContent = d.output_url;
+    document.getElementById("lab-output-link").hidden = false;
     document.getElementById("lab-face-info").textContent = " (" + d.face_count + "张脸, " + (d.elapsed_ms||0).toFixed(0) + "ms)";
     const updateConfWidget = (prefix, value) => {
       const avgPct = (value.avg_score * 100).toFixed(1);
@@ -1733,6 +1760,11 @@ def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None =
         raise HTTPException(400, str(exc)) from exc
     elapsed = (time.perf_counter() - t0) * 1000
     out_b64 = base64.b64encode(result["image_bytes"]).decode("ascii")
+    image_id = uuid.uuid4().hex[:12]
+    output_path = STATIC_DIR / f"lab_{image_id}.jpg"
+    output_path.write_bytes(result["image_bytes"])
+    _invalidate_storage_stats()
+    output_url = _short_url_for(image_id, str(request.base_url))
     before_confidence = _confidence_summary(result.get("faces", []))
     try:
         after_probe = process_image(
@@ -1745,7 +1777,7 @@ def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None =
         after_confidence = _confidence_summary([])
     return {
         "ok": True, "task_id": task_id, "face_count": result.get("face_count", 0),
-        "elapsed_ms": elapsed, "output_base64": out_b64,
+        "elapsed_ms": elapsed, "output_base64": out_b64, "output_url": output_url,
         "confidence": {"threshold": req.score_threshold, "before": before_confidence, "after": after_confidence},
     }
 

@@ -297,6 +297,11 @@ class TaskTrackingTests(unittest.TestCase):
                 json={'image_base64': image_b64, 'mode': 'landmark_whole_face', 'score_threshold': 0.52},
             )
         self.assertEqual(response.status_code, 200)
+        output_url = response.json()['output_url']
+        self.assertRegex(output_url, r'/i/[0-9a-f]{12}$')
+        short_image = self.client.get(output_url)
+        self.assertEqual(short_image.status_code, 200)
+        self.assertEqual(short_image.content, b'blurred-image')
         confidence = response.json()['confidence']
         self.assertEqual(confidence['threshold'], 0.52)
         self.assertEqual(confidence['before']['face_count'], 2)
