@@ -2193,7 +2193,8 @@ ADMIN_HTML = """
     .tab { border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--muted); padding: 10px 16px; cursor: pointer; }
     .tab.active { border-bottom-color: var(--accent); color: var(--ink); font-weight: 700; }
     .tab-view[hidden] { display: none; }
-    .grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .grid { display: flex; gap: 12px; margin-bottom: 18px; overflow-x: auto; flex-wrap: nowrap; }
+    .grid .card { flex: 0 0 calc(16.66% - 10px); min-width: 150px; }
     .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; box-shadow: var(--shadow); min-height: 104px; }
     .label { color: var(--muted); font-size: 13px; }
     .metric { margin-top: 8px; font-size: 30px; font-weight: 700; }
@@ -2257,6 +2258,8 @@ ADMIN_HTML = """
         <input id="token" type="password" placeholder="Admin token" autocomplete="off" />
         <button class="btn" onclick="saveToken()">保存</button>
         <button class="btn secondary" onclick="loadAll()">刷新</button>
+        <input id="task-search" type="search" placeholder="输入任务 ID 定位" aria-label="任务 ID" style="width:160px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font-size:13px" />
+        <button class="btn secondary" onclick="findTask()" style="white-space:nowrap">查询</button>
         <button id="themeToggle" class="btn secondary" title="切换深色模式" onclick="toggleTheme()" style="font-size:16px">🌙</button>
       </div>
     </header>
@@ -2266,12 +2269,8 @@ ADMIN_HTML = """
       <button class="tab" data-tab="gallery" onclick="showGalleryTab()">图片库</button>
       <button class="tab" id="task-tab" data-tab="task" onclick="showTab('task')" hidden>任务详情</button>
       <button class="tab" data-tab="settings" onclick="showTab('settings'); loadSettingsTab();">⚙ 全局设置</button>
-    <button class="tab" data-tab="lab" onclick="showLabTab()">🧪 实验室</button>
+      <button class="tab" data-tab="lab" onclick="showLabTab()">🧪 实验室</button>
     </nav>
-    <div class="task-search">
-      <input id="task-search" type="search" placeholder="输入任务 ID 或父任务ID 定位" aria-label="任务 ID" />
-      <button class="btn secondary" onclick="findTask()">查询任务</button>
-    </div>
 
     <div class="status" id="status">正在加载...</div>
     <div class="tab-view" data-tab="overview-stats">
