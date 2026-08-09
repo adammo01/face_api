@@ -2049,6 +2049,16 @@ ADMIN_HTML = """
       --warn: #a84526;
       --shadow: 0 12px 30px rgba(32, 29, 22, 0.08);
     }
+    [data-theme="dark"] {
+      --bg: #1a1a1a;
+      --panel: #2a2a2a;
+      --ink: #e0e0e0;
+      --muted: #999;
+      --line: #444;
+      --accent: #5cbf90;
+      --warn: #e07b5a;
+      --shadow: 0 12px 30px rgba(0,0,0,0.35);
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -2133,6 +2143,7 @@ ADMIN_HTML = """
         <input id="token" type="password" placeholder="Admin token" autocomplete="off" />
         <button class="btn" onclick="saveToken()">保存</button>
         <button class="btn secondary" onclick="loadAll()">刷新</button>
+        <button id="themeToggle" class="btn secondary" title="切换深色模式" onclick="toggleTheme()" style="font-size:16px">🌙</button>
       </div>
     </header>
 
@@ -2293,6 +2304,22 @@ ADMIN_HTML = """
       loadAll();
     }
     function saveToken(){ persistTokenAndReload(); }
+    function setTheme(dark){
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : '');
+      try { localStorage.setItem('faceblur_theme', dark ? 'dark' : 'light'); } catch(_){}
+      const btn = document.getElementById('themeToggle');
+      if(btn) btn.textContent = dark ? '\u2600\uFE0F' : '\uD83C\uDF19';
+    }
+    function toggleTheme(){
+      setTheme(document.documentElement.getAttribute('data-theme') !== 'dark');
+    }
+    (function(){
+      try {
+        const s = localStorage.getItem('faceblur_theme');
+        if(s === 'dark') setTheme(true);
+        else if(s === 'light' || !s) setTheme(false);
+      } catch(_){}
+    })();
     function headers(){ const t = tokenEl.value.trim(); return t ? {'X-Admin-Token': t} : {}; }
     function setStatus(text){ document.getElementById('status').textContent = text; }
     function fmtBytes(n){ if(!n) return '0 B'; const u=['B','KB','MB','GB']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return `${n.toFixed(i?1:0)} ${u[i]}`; }
