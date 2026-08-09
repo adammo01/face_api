@@ -115,6 +115,11 @@ class AdminPageTests(unittest.TestCase):
     def test_global_settings_has_one_clear_cache_button(self):
         self.assertEqual(ADMIN_HTML.count('onclick="clearCache()"'), 1)
 
+    def test_parent_cache_clear_control_is_available(self):
+        self.assertIn('function clearParentCache()', ADMIN_HTML)
+        self.assertIn('parent_task_id=', ADMIN_HTML)
+        self.assertIn('清除父任务缓存', ADMIN_HTML)
+
     def test_task_id_can_be_searched_and_copied(self):
         self.assertIn('id="task-search"', ADMIN_HTML)
         self.assertIn('function findTask()', ADMIN_HTML)

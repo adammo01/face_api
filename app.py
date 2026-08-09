@@ -97,7 +97,7 @@ ADMIN_TOKEN = os.environ.get("FACE_BLUR_ADMIN_TOKEN", API_TOKEN)
 
 # 下载图时的超时和最大尺寸
 DOWNLOAD_TIMEOUT = int(os.environ.get("FACE_BLUR_DL_TIMEOUT", "30"))
-MAX_IMAGE_BYTES = int(os.environ.get("FACE_BLUR_MAX_BYTES", str(20 * 1024 * 1024)))  # 20 MB
+MAX_IMAGE_BYTES = int(os.environ.get("FACE_BLUR_MAX_BYTES", str(50 * 1024 * 1024)))  # 50 MB
 IMAGE_TTL_HOURS = int(os.environ.get("FACE_BLUR_IMAGE_TTL_HOURS", "72"))
 DB_CACHE_TTL_HOURS = int(os.environ.get("FACE_BLUR_DB_CACHE_TTL_HOURS", str(IMAGE_TTL_HOURS)))
 CLEANUP_INTERVAL_SECONDS = int(os.environ.get("FACE_BLUR_CLEANUP_INTERVAL_SECONDS", "3600"))
@@ -1014,6 +1014,65 @@ def _db_cache_cleanup_expired():
     except Exception as e:
         log.warning("db_cache_cleanup failed: %s", e)
         return 0
+
+
+def _cache_clear_parent(parent_task_id: str) -> tuple[int, int]:
+    """清理某个父任务关联的 L1/L2 缓存，不影响其他父任务。"""
+    parent_task_id = parent_task_id.strip()
+    if not parent_task_id:
+        return 0, 0
+
+    names: set[str] = set()
+    urls: set[str] = set()
+    with _db() as conn:
+        refs = conn.execute(
+            """SELECT output_file, output_url FROM requests
+               WHERE parent_task_id=? AND (output_file IS NOT NULL OR output_url IS NOT NULL)""",
+            (parent_task_id,),
+        ).fetchall()
+        for row in refs:
+            if row["output_file"]:
+                names.add(Path(row["output_file"]).name)
+            if row["output_url"]:
+                urls.add(str(row["output_url"]))
+
+        cache_rows = []
+        if names or urls:
+            clauses = []
+            params: list[str] = []
+            if names:
+                placeholders = ",".join("?" for _ in names)
+                clauses.append(f"output_file IN ({placeholders})")
+                params.extend(sorted(names))
+            if urls:
+                placeholders = ",".join("?" for _ in urls)
+                clauses.append(f"output_url IN ({placeholders})")
+                params.extend(sorted(urls))
+            cache_rows = conn.execute(
+                "SELECT cache_key FROM blur_cache WHERE " + " OR ".join(clauses), params
+            ).fetchall()
+            keys = [row["cache_key"] for row in cache_rows]
+            if keys:
+                placeholders = ",".join("?" for _ in keys)
+                conn.execute(f"DELETE FROM blur_cache WHERE cache_key IN ({placeholders})", keys)
+        else:
+            keys = []
+
+    def matches(resp: dict) -> bool:
+        output_file = resp.get("output_file")
+        output_url = resp.get("output_url")
+        return (
+            (output_file and Path(str(output_file)).name in names)
+            or (output_url and str(output_url) in urls)
+        )
+
+    l1_count = 0
+    with _CACHE_LOCK:
+        for key, entry in list(_RESPONSE_CACHE.items()):
+            if matches(entry.get("resp") or {}):
+                del _RESPONSE_CACHE[key]
+                l1_count += 1
+    return l1_count, len(keys)
 
 
 def _public_url_for(path: Path, request_base: str) -> str:
@@ -2081,11 +2140,20 @@ def admin_files(
 @app.post("/api/admin/clear-cache")
 def admin_clear_cache(
     request: Request,
+    parent_task_id: str | None = Query(default=None, max_length=200),
     authorization: str | None = Header(default=None),
     x_admin_token: str | None = Header(default=None),
     token: str | None = Query(default=None),
 ):
     _require_admin(request, authorization, x_admin_token, token)
+    if parent_task_id is not None:
+        l1_count, l2_count = _cache_clear_parent(parent_task_id)
+        return {
+            "ok": True,
+            "parent_task_id": parent_task_id,
+            "cleared_l1": l1_count,
+            "cleared_l2": l2_count,
+        }
     with _db() as conn:
         n = conn.execute("SELECT COUNT(*) FROM blur_cache").fetchone()[0]
         conn.execute("DELETE FROM blur_cache")
@@ -2309,6 +2377,7 @@ ADMIN_HTML = """
       <div class="search-center" style="flex:1;display:flex;justify-content:center;align-items:center;gap:8px">
         <input id="task-search" type="search" placeholder="输入任务 ID 定位..." aria-label="任务 ID" style="width:240px;padding:9px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font-size:13px" />
         <button class="btn secondary" onclick="findTask()" style="white-space:nowrap">查询</button>
+        <button class="btn danger" onclick="clearParentCache()" style="white-space:nowrap" title="按当前父任务 ID 清除缓存">清除父任务缓存</button>
       </div>
       <div class="auth">
         <input id="token" type="password" placeholder="Admin token" autocomplete="off" />
@@ -2829,6 +2898,16 @@ ADMIN_HTML = """
       if(!confirm("确认清空所有打码缓存？")) return;
       const d = await api("/api/admin/clear-cache", {method:"POST"});
       setStatus("已清空 L1 " + (d.cleared_l1 || 0) + " 条、L2 " + (d.cleared_l2 || 0) + " 条缓存");
+    }
+    async function clearParentCache(){
+      const parentTaskId = activeParentSearch;
+      if(!parentTaskId){ setStatus('请先查询父任务 ID'); return; }
+      if(!confirm(`确认清除父任务 ${parentTaskId} 的缓存？`)) return;
+      try {
+        const url = '/api/admin/clear-cache?parent_task_id=' + encodeURIComponent(parentTaskId);
+        const d = await api(url, {method:'POST'});
+        setStatus(`已清除父任务缓存 L1 ${d.cleared_l1 || 0} 条、L2 ${d.cleared_l2 || 0} 条`);
+      } catch(e) { setStatus(`清除父任务缓存失败: ${e.message}`); }
     }
     async function saveSettings(){
       const body = {

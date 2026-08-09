@@ -213,6 +213,41 @@ class TaskTrackingTests(unittest.TestCase):
         self.assertIsNone(self.module._cache_get('test-key'))
         self.assertNotEqual(self.module._get_setting('cache_epoch', '0'), old_epoch)
 
+    def test_clear_cache_by_parent_only_removes_matching_l1_and_l2_entries(self):
+        parent_file = 'parent-cache-output.jpg'
+        other_file = 'other-cache-output.jpg'
+        (self.module.STATIC_DIR / parent_file).write_bytes(b'parent')
+        (self.module.STATIC_DIR / other_file).write_bytes(b'other')
+        self.module._insert_request({
+            'task_id': 'parent-cache-task', 'status': 'ok', 'mode': 'gaussian',
+            'output_file': parent_file, 'output_url': '/static/' + parent_file,
+            'parent_task_id': 'parent-to-clear',
+        })
+        self.module._insert_request({
+            'task_id': 'other-cache-task', 'status': 'ok', 'mode': 'gaussian',
+            'output_file': other_file, 'output_url': '/static/' + other_file,
+            'parent_task_id': 'parent-to-keep',
+        })
+        self.module._cache_set('parent-l1', {'output_file': parent_file, 'output_url': '/static/' + parent_file})
+        self.module._cache_set('other-l1', {'output_file': other_file, 'output_url': '/static/' + other_file})
+        self.module._db_cache_set('parent-l2', 'https://example.com/parent', '/static/' + parent_file, parent_file, 'gaussian')
+        self.module._db_cache_set('other-l2', 'https://example.com/other', '/static/' + other_file, other_file, 'gaussian')
+
+        response = self.client.post(
+            '/api/admin/clear-cache?parent_task_id=parent-to-clear',
+            headers={'X-Admin-Token': 'test-admin'},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['cleared_l1'], 1)
+        self.assertEqual(response.json()['cleared_l2'], 1)
+        self.assertIsNone(self.module._cache_get('parent-l1'))
+        self.assertIsNotNone(self.module._cache_get('other-l1'))
+        self.assertIsNone(self.module._db_cache_get('parent-l2'))
+        self.assertIsNotNone(self.module._db_cache_get('other-l2'))
+
+    def test_default_download_limit_accepts_requested_large_image(self):
+        self.assertGreaterEqual(self.module.MAX_IMAGE_BYTES, 21271569)
+
     def test_lab_returns_before_and_after_confidence_summary(self):
         before = {
             'image_bytes': b'blurred-image',
