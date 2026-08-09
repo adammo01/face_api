@@ -1255,7 +1255,7 @@ def lab_page(request: Request):
             </div>
             <div class="lab-param">
               <label>距离分档方案</label>
-              <textarea id="lab-profiles" rows="8" style="width:100%;font:12px ui-monospace,monospace;padding:8px;border:1px solid var(--line);border-radius:8px">[{"name":"small","min_width":0,"max_width":99,"modes":["landmark_whole_face"],"face_grid_step":20,"dot_radius":1,"grid_n":3},{"name":"medium","min_width":100,"max_width":199,"modes":["landmark_whole_face"],"face_grid_step":12,"dot_radius":2,"grid_n":5},{"name":"large","min_width":200,"max_width":10000,"modes":["landmark_whole_face"],"face_grid_step":14,"dot_radius":3,"grid_n":5}]</textarea>
+              <textarea id="lab-profiles" rows="8" style="width:100%;font:12px ui-monospace,monospace;padding:8px;border:1px solid var(--line);border-radius:8px">[]</textarea>
               <div class="hint">按原始脸宽(px)命中一档：small=0-99、medium=100-199、large=200以上。每档的 modes 和参数独立生效；未命中时使用上面的全局模式。</div>
               <details class="lab-json-help"><summary>查看填写示例</summary><pre>{
   "name": "medium",
@@ -1309,9 +1309,10 @@ const BASE = window.location.origin;
 const LAB_TOKEN = new URLSearchParams(location.search).get("token") || "";
 const LAB_PRESETS_KEY = "faceblur.lab.presets.v1";
 const LAB_PROFILE_EXAMPLE = [{name:"small",min_width:0,max_width:99,modes:["landmark_whole_face"],face_grid_step:20,dot_radius:1,grid_n:3},{name:"medium",min_width:100,max_width:199,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:5},{name:"large",min_width:200,max_width:10000,modes:["landmark_whole_face"],face_grid_step:14,dot_radius:3,grid_n:5}];
-const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:LAB_PROFILE_EXAMPLE, score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5};
+const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:[], score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5};
 async function apiLab(path, opts={}){
   if(LAB_TOKEN){ opts.headers = opts.headers || {}; opts.headers["X-Admin-Token"] = LAB_TOKEN; }
+  opts.cache = "no-store";
   const r = await fetch(BASE+path, opts);
   const t = await r.text();
   let data;
@@ -1437,6 +1438,7 @@ async function labTest(){
   const url = document.getElementById("lab-url").value.trim();
   if(!b64 && !url){ alert("请先上传图片或输入 URL"); return; }
   const btn = document.getElementById("lab-test-btn");
+  const runId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2));
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>处理中...';
   document.getElementById("lab-status").textContent = "正在提交打码请求...";
@@ -1452,7 +1454,7 @@ async function labTest(){
     };
     if(b64) body.image_base64 = b64;
     if(url) body.image_url = url;
-    const d = await apiLab("/api/lab/test", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    const d = await apiLab("/api/lab/test", {method:"POST", headers:{"Content-Type":"application/json", "X-Lab-Run-Id": runId}, body: JSON.stringify(body)});
     const af = document.getElementById("lab-after");
     af.src = "data:image/jpeg;base64," + d.output_base64;
     af.style.display = "";
@@ -1469,7 +1471,7 @@ async function labTest(){
     updateConfWidget('before', d.confidence.before);
     updateConfWidget('after', d.confidence.after);
     document.getElementById("lab-confidence").hidden = false;
-    document.getElementById("lab-status").textContent = "✓ 完成";
+    document.getElementById("lab-status").textContent = "✓ 已重新处理 · 任务 ID: " + (d.task_id || runId);
     document.getElementById("lab-sync-btn").disabled = false;
     if(!b64 && url){
       const bf = document.getElementById("lab-before");
@@ -1627,6 +1629,7 @@ def _confidence_summary(faces: list) -> dict:
 def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None = Header(default=None), x_admin_token: str | None = Header(default=None)):
     """打码实验室 - 需要 Admin 鉴权"""
     _require_admin(request, authorization, x_admin_token, token=None)
+    task_id = request.headers.get("x-lab-run-id") or uuid.uuid4().hex
     import base64
     img_bytes = None
     if req.image_base64:
@@ -1677,7 +1680,7 @@ def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None =
         log.warning("lab post-blur confidence detection failed: %s", exc)
         after_confidence = _confidence_summary([])
     return {
-        "ok": True, "face_count": result.get("face_count", 0),
+        "ok": True, "task_id": task_id, "face_count": result.get("face_count", 0),
         "elapsed_ms": elapsed, "output_base64": out_b64,
         "confidence": {"threshold": req.score_threshold, "before": before_confidence, "after": after_confidence},
     }

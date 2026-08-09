@@ -121,6 +121,17 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('d.confidence.after', APP_SOURCE)
         self.assertIn('"confidence": {"threshold": req.score_threshold', APP_SOURCE)
 
+    def test_lab_runs_are_explicitly_unique_and_uncached(self):
+        self.assertIn('opts.cache = "no-store"', APP_SOURCE)
+        self.assertIn('X-Lab-Run-Id', APP_SOURCE)
+        self.assertIn('"task_id": task_id', APP_SOURCE)
+        self.assertIn('已重新处理 · 任务 ID:', APP_SOURCE)
+
+    def test_lab_defaults_do_not_override_selected_global_mode(self):
+        self.assertIn('const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:[]', APP_SOURCE)
+        self.assertIn('id="lab-profiles" rows="8"', APP_SOURCE)
+        self.assertIn('>[]</textarea>', APP_SOURCE)
+
     def test_global_settings_has_one_clear_cache_button(self):
         self.assertEqual(ADMIN_HTML.count('onclick="clearCache()"'), 1)
 
