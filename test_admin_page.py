@@ -145,6 +145,12 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('id="lab-profiles" rows="8"', APP_SOURCE)
         self.assertIn('>[]</textarea>', APP_SOURCE)
 
+    def test_lab_profile_example_uses_three_non_overlapping_ranges(self):
+        self.assertIn('min_width:40,max_width:59', APP_SOURCE)
+        self.assertIn('min_width:60,max_width:79', APP_SOURCE)
+        self.assertIn('min_width:80,max_width:110', APP_SOURCE)
+        self.assertIn('name:"large"', APP_SOURCE)
+
     def test_distance_profile_docs_page_is_linked_and_public(self):
         self.assertIn('@app.get("/docs/face-profiles"', APP_SOURCE)
         self.assertIn('href="/docs/face-profiles"', APP_SOURCE)
