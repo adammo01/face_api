@@ -1201,7 +1201,7 @@ def lab_page(request: Request):
     <div class="lab-wrap">
       <div class="lab-header">
         <h2>🧪 打码实验室</h2>
-        <span class="lab-badge">独立测试环境</span>
+        <span><a href="/docs/face-profiles" target="_blank" rel="noopener" style="margin-right:12px;color:var(--accent);font-size:13px">查看距离分档说明</a><span class="lab-badge">独立测试环境</span></span>
       </div>
       <div class="lab-grid">
         <div>
@@ -1616,6 +1616,61 @@ window.addEventListener("DOMContentLoaded", () => {
 <input type="hidden" id="lab-base64" />
 </body>
 </html>
+""")
+
+
+@app.get("/docs/face-profiles", response_class=HTMLResponse)
+def face_profiles_docs():
+    """公开的距离分档配置说明页。"""
+    return HTMLResponse(content="""
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>距离分档方案填写说明 · FaceBlur</title>
+<style>
+:root{--ink:#171717;--muted:#6f6b62;--bg:#f4f2ec;--panel:#fffdf7;--line:#d8d2c4;--accent:#1f7a5a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,sans-serif;line-height:1.7}
+main{max-width:960px;margin:0 auto;padding:36px 22px 60px}h1{margin:0 0 8px;font-size:28px}h2{margin:30px 0 8px;font-size:19px;border-bottom:1px solid var(--line);padding-bottom:6px}h3{font-size:15px;margin:20px 0 4px}p{margin:8px 0;color:var(--muted)}a{color:var(--accent)}code,pre{font:13px ui-monospace,SFMono-Regular,Menlo,monospace}pre{padding:16px;overflow:auto;background:#222;color:#f5f5f5;border-radius:8px}table{width:100%;border-collapse:collapse;background:var(--panel);margin:10px 0}th,td{text-align:left;padding:9px 11px;border:1px solid var(--line);vertical-align:top}th{background:#e8f1eb}li{margin:5px 0;color:var(--muted)}.back{display:inline-block;margin-bottom:20px}
+@media(max-width:640px){main{padding:24px 15px 45px}h1{font-size:24px}table{font-size:13px}pre{font-size:11px}}
+</style></head><body><main>
+<a class="back" href="/lab">← 返回打码实验室</a>
+<h1>距离分档方案填写说明</h1>
+<p>根据检测到的人脸宽度，为小脸、中脸、大脸分别使用不同的打码模式和参数。</p>
+<h2>最小可用格式</h2>
+<pre>[{
+  "name": "medium",
+  "min_width": 100,
+  "max_width": 199,
+  "modes": ["gaussian"],
+  "face_grid_step": 12,
+  "dot_radius": 2,
+  "grid_n": 5
+}]</pre>
+<h2>字段说明</h2>
+<table><tr><th>字段</th><th>说明</th></tr>
+<tr><td><code>name</code></td><td>档位名称，例如 small、medium、large。</td></tr>
+<tr><td><code>min_width</code> / <code>max_width</code></td><td>人脸框宽度范围，单位 px，上下限都包含。</td></tr>
+<tr><td><code>modes</code></td><td>模式数组，按数组顺序叠加执行。</td></tr>
+<tr><td><code>face_grid_step</code></td><td>整脸红点网格间距，越小越密。</td></tr>
+<tr><td><code>dot_radius</code></td><td>红点半径，通常 1-10。</td></tr>
+<tr><td><code>grid_n</code></td><td>关键点附近网格密度，通常 3-11。</td></tr></table>
+<h2>参数实际效果</h2>
+<ul>
+<li><code>min_width</code> / <code>max_width</code>：决定方案用于多远的人脸。数值越小通常代表更远的小脸，数值越大代表更近的大脸。</li>
+<li><code>modes</code>：决定算法和叠加顺序。高斯模糊较柔和，马赛克更明显，纯色遮挡最强，landmark 模式使用红点遮罩；多个模式会依次处理同一张脸。</li>
+<li><code>face_grid_step</code>：红点间距。调小会更密、遮挡更强；调大更稀疏、保留更多细节。</li>
+<li><code>dot_radius</code>：红点半径。调大红点更粗，遮挡更强。</li>
+<li><code>grid_n</code>：关键点附近密集网格尺寸。调大覆盖更强但画面更粗糙。</li>
+</ul>
+<p>全局参数：<code>score_threshold</code> 越低越灵敏但误检更多；<code>expand_ratio</code> 越大覆盖边缘越充分但可能遮到背景；<code>min_face_skip</code> 越大越容易跳过远景小脸，设为 <code>0</code> 表示不跳过。</p>
+<h2>可用模式</h2><ul><li><code>landmark_whole_face</code>：整脸红点遮罩</li><li><code>landmark</code>：关键点遮罩</li><li><code>gaussian</code>：高斯模糊</li><li><code>pixelate</code>：马赛克</li><li><code>solid</code>：纯色遮挡</li></ul>
+<p>例如先高斯模糊，再叠加马赛克：<code>"modes": ["gaussian", "pixelate"]</code>。</p>
+<h2>推荐三档</h2>
+<pre>[{"name":"small","min_width":0,"max_width":99,"modes":["landmark_whole_face"],"face_grid_step":20,"dot_radius":1,"grid_n":3},{"name":"medium","min_width":100,"max_width":199,"modes":["landmark_whole_face"],"face_grid_step":12,"dot_radius":2,"grid_n":5},{"name":"large","min_width":200,"max_width":10000,"modes":["landmark_whole_face"],"face_grid_step":14,"dot_radius":3,"grid_n":5}]</pre>
+<h2>生效规则</h2><p><code>face_profiles</code> 为空时，所有人脸使用全局模式；不为空时，命中档位的人脸使用该档位配置，未命中时回退全局配置。想停用分档请填写 <code>[]</code>。</p>
+<h2>操作步骤</h2><ol><li>在实验室选择模式或填入三档示例。</li><li>修改范围、模式和参数后点击“执行打码”。</li><li>确认结果后点击“同步到全局”，后续普通请求才会使用。</li></ol>
+</main></body></html>
 """)
 
 def _confidence_summary(faces: list) -> dict:
@@ -2488,7 +2543,7 @@ ADMIN_HTML = """
       </div>
     </section>
     <section class="panel" style="margin-bottom:14px">
-      <div class="panel-head"><h2>🎨 打码全局默认参数</h2><span style="color:var(--text-dim);font-size:13px">调整后对新建请求生效（已缓存图不受影响）</span></div>
+      <div class="panel-head"><h2>🎨 打码全局默认参数</h2><span style="color:var(--text-dim);font-size:13px">调整后对新建请求生效（已缓存图不受影响） · <a href="/docs/face-profiles">距离分档填写说明</a></span></div>
       <div class="settings" style="gap:14px">
         <div class="field" title="人脸检测置信度阈值(0.3-1.0) 越小越灵敏但误检越多"><label>检测阈值</label><input id="s-score" type="number" min="0.3" max="1.0" step="0.01"/></div>
         <div class="field" title="扩框比例(0-1.0) 检测框向外扩展的安全余量"><label>扩框比例</label><input id="s-expand" type="number" min="0" max="1.0" step="0.05"/></div>

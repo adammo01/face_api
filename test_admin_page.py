@@ -133,6 +133,11 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('id="lab-profiles" rows="8"', APP_SOURCE)
         self.assertIn('>[]</textarea>', APP_SOURCE)
 
+    def test_distance_profile_docs_page_is_linked_and_public(self):
+        self.assertIn('@app.get("/docs/face-profiles"', APP_SOURCE)
+        self.assertIn('href="/docs/face-profiles"', APP_SOURCE)
+        self.assertIn('返回打码实验室', APP_SOURCE)
+
     def test_global_settings_has_one_clear_cache_button(self):
         self.assertEqual(ADMIN_HTML.count('onclick="clearCache()"'), 1)
 
