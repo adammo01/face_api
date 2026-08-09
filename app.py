@@ -2198,8 +2198,8 @@ ADMIN_HTML = """
     .label { color: var(--muted); font-size: 13px; }
     .metric { margin-top: 8px; font-size: 30px; font-weight: 700; }
     .split { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(360px, 1fr); gap: 18px; }
-    .split .files { overflow-y: auto; max-height: 70vh; }
-    .split .file img { max-height: 160px; }
+    .split .files { overflow-y: auto; max-height: 80vh; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .split .file img { max-height: 130px; }
     .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; box-shadow: var(--shadow); }
     .panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--line); }
     .settings { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 14px 16px; align-items: end; }
