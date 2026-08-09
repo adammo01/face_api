@@ -2145,7 +2145,7 @@ ADMIN_HTML = """
       font-family: ui-serif, Georgia, "Times New Roman", "Microsoft YaHei", serif;
     }
     button, input, select { font: inherit; }
-    .shell { max-width: 1920px; margin: 0 auto; padding: 28px 24px 48px; }
+    .shell { max-width: none; margin: 0 auto; padding: 28px 100px 48px; }
     header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-end; margin-bottom: 22px; }
     h1 { margin: 0; font-size: 34px; line-height: 1; letter-spacing: 0; }
     .sub { margin-top: 8px; color: var(--muted); font-size: 14px; }
