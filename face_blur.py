@@ -537,8 +537,13 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
         # 密集竖图中远处人脸在整图输入里过小，使用重叠分块补检。
         short_side = min(h, w)
         long_side = max(h, w)
-        if len(faces_list) >= 8 and (long_side / max(short_side, 1) >= 1.35 or long_side >= 1600):
-            tiled_faces = detector.detect_overlapping_tiles(img)
+        dense_scene = len(faces_list) >= 16
+        portrait_scene = len(faces_list) >= 8 and (
+            long_side / max(short_side, 1) >= 1.35 or long_side >= 1600
+        )
+        if dense_scene or portrait_scene:
+            tile_size, tile_step = ((320, 240) if dense_scene else (512, 384))
+            tiled_faces = detector.detect_overlapping_tiles(img, tile_size, tile_step)
             faces_list = _nms_faces(faces_list + tiled_faces, iou_thresh=0.35)
         # 默认参数区分两种 landmark 模式
         if "landmark_whole_face" in modes:

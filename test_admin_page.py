@@ -132,6 +132,8 @@ class AdminPageTests(unittest.TestCase):
     def test_dense_portrait_detection_uses_overlapping_tiles(self):
         self.assertIn('def detect_overlapping_tiles(', FACE_BLUR_SOURCE)
         self.assertIn('tile_size: int = 512', FACE_BLUR_SOURCE)
+        self.assertIn('dense_scene = len(faces_list) >= 16', FACE_BLUR_SOURCE)
+        self.assertIn('(320, 240) if dense_scene else (512, 384)', FACE_BLUR_SOURCE)
         self.assertIn('faces_list = _nms_faces(faces_list + tiled_faces', FACE_BLUR_SOURCE)
 
     def test_lab_parameters_use_two_columns_on_wide_screens(self):
