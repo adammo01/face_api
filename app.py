@@ -2712,7 +2712,7 @@ ADMIN_HTML = """
       </section>
     </div>
     <div class="tab-view" data-tab="lab" hidden>
-      <section class="panel"><iframe id="lab-frame" title="打码实验室" style="display:block;width:100%;height:900px;border:0"></iframe></section>
+      <section class="panel"><iframe id="lab-frame" title="打码实验室" style="display:block;width:100%;height:1250px;border:0"></iframe></section>
     </div>
   </main>
   <div class="image-modal" id="image-modal" hidden onclick="closeImagePreview(event)">
