@@ -21,6 +21,7 @@ def _app_source() -> str:
 
 ADMIN_HTML = _admin_html()
 APP_SOURCE = _app_source()
+FACE_BLUR_SOURCE = Path(__file__).with_name('face_blur.py').read_text(encoding='utf-8')
 
 
 class AdminPageTests(unittest.TestCase):
@@ -128,6 +129,11 @@ class AdminPageTests(unittest.TestCase):
     def test_face_profiles_allow_more_than_three_ranges(self):
         self.assertIn('face_profiles: list[dict] = Field(default_factory=list, max_length=20)', APP_SOURCE)
 
+    def test_dense_portrait_detection_uses_overlapping_tiles(self):
+        self.assertIn('def detect_overlapping_tiles(', FACE_BLUR_SOURCE)
+        self.assertIn('tile_size: int = 512', FACE_BLUR_SOURCE)
+        self.assertIn('faces_list = _nms_faces(faces_list + tiled_faces', FACE_BLUR_SOURCE)
+
     def test_lab_parameters_use_two_columns_on_wide_screens(self):
         self.assertIn('grid-template-columns:minmax(0,1fr) minmax(0,1fr)', APP_SOURCE)
         self.assertIn('.lab-btns, .lab-presets, .status-text { grid-column:1 / -1; }', APP_SOURCE)
@@ -164,7 +170,7 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('>[]</textarea>', APP_SOURCE)
 
     def test_lab_profile_example_uses_four_non_overlapping_ranges(self):
-        self.assertIn('min_width:20,max_width:39', APP_SOURCE)
+        self.assertIn('min_width:21,max_width:39', APP_SOURCE)
         self.assertIn('min_width:40,max_width:60', APP_SOURCE)
         self.assertIn('min_width:60,max_width:80', APP_SOURCE)
         self.assertIn('min_width:80,max_width:110', APP_SOURCE)

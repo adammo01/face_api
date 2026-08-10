@@ -195,6 +195,34 @@ class FaceDetector:
 
         return _nms_faces(_clip_faces(all_boxes, w, h), iou_thresh=0.35)
 
+    def detect_overlapping_tiles(self, img_bgr: np.ndarray,
+                                 tile_size: int = 512,
+                                 step: int = 384) -> List[FaceBox]:
+        """在重叠的小块中检测远处/拥挤人脸，补足整图检测的漏检。"""
+        h, w = img_bgr.shape[:2]
+        original_size = (w, h)
+        boxes: List[FaceBox] = []
+        for y in range(0, h, step):
+            for x in range(0, w, step):
+                x2, y2 = min(w, x + tile_size), min(h, y + tile_size)
+                tile = img_bgr[y:y2, x:x2]
+                if tile.shape[0] < 64 or tile.shape[1] < 64:
+                    continue
+                tile_size_xy = (tile.shape[1], tile.shape[0])
+                self._detector.setInputSize(tile_size_xy)
+                _, faces = self._detector.detect(tile)
+                if faces is None:
+                    continue
+                for face in faces:
+                    boxes.append(FaceBox(
+                        int(face[0]) + x, int(face[1]) + y,
+                        int(face[2]), int(face[3]), float(face[-1]),
+                        "yunet-tile",
+                    ))
+        self._detector.setInputSize(original_size)
+        self._last_size = original_size
+        return _nms_faces(_clip_faces(boxes, w, h), iou_thresh=0.35)
+
     def detect_haar_fallback(self, img_bgr: np.ndarray) -> List[FaceBox]:
         """OpenCV Haar 正脸兜底, 用于补 YuNet 漏掉的弱分数人脸。"""
         if self._haar is None:
@@ -506,6 +534,12 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
     )
     if uses_landmark:
         faces_list = detector.detect_multiscale(img)
+        # 密集竖图中远处人脸在整图输入里过小，使用重叠分块补检。
+        short_side = min(h, w)
+        long_side = max(h, w)
+        if len(faces_list) >= 8 and (long_side / max(short_side, 1) >= 1.35 or long_side >= 1600):
+            tiled_faces = detector.detect_overlapping_tiles(img)
+            faces_list = _nms_faces(faces_list + tiled_faces, iou_thresh=0.35)
         # 默认参数区分两种 landmark 模式
         if "landmark_whole_face" in modes:
             dot_radius = int(blur_params.get("dot_radius", 3))
