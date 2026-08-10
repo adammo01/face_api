@@ -1305,7 +1305,7 @@ def lab_page(request: Request):
             <div class="lab-param"><label>跳小脸(px) <span id="lab-minface-v">50</span></label><input type="range" id="lab-minface" min="0" max="500" step="5" value="50" oninput="document.getElementById('lab-minface-v').textContent=this.value" /><div class="hint">脸宽小于此值直接跳过，0=全部打码</div></div>
             <div class="lab-param"><label>网格间距 <span id="lab-step-v">14</span></label><input type="range" id="lab-step" min="4" max="40" step="1" value="14" oninput="document.getElementById('lab-step-v').textContent=this.value; labStepChanged()" /><div class="hint">越小越密集</div></div>
             <div class="lab-param"><label>红点半径 <span id="lab-dot-v">3</span></label><input type="range" id="lab-dot" min="1" max="10" step="1" value="3" oninput="document.getElementById('lab-dot-v').textContent=this.value" /><div class="hint">红点大小(px)</div></div>
-            <div class="lab-param"><label>网格密度N <span id="lab-n-v">5</span></label><input type="range" id="lab-n" min="1" max="9" step="1" value="5" oninput="document.getElementById('lab-n-v').textContent=this.value" /><div class="hint">关键点周围叠加层数</div></div>
+            <div class="lab-param"><label>网格密度N <span id="lab-n-v">5</span></label><input type="range" id="lab-n" min="3" max="11" step="1" value="5" oninput="document.getElementById('lab-n-v').textContent=this.value" /><div class="hint">关键点周围叠加层数</div></div>
             <div class="lab-btns">
               <button class="btn primary" onclick="labTest()" id="lab-test-btn">🚀 执行打码</button>
               <button class="btn secondary" onclick="labSyncGlobal()" id="lab-sync-btn" disabled>📋 同步到全局</button>
@@ -1342,6 +1342,15 @@ const LAB_TOKEN = new URLSearchParams(location.search).get("token") || "";
 const LAB_PRESETS_KEY = "faceblur.lab.presets.v1";
 const LAB_PROFILE_EXAMPLE = [{name:"small",min_width:40,max_width:59,modes:["landmark"],face_grid_step:12,dot_radius:1,grid_n:3},{name:"medium",min_width:60,max_width:79,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:4},{name:"large",min_width:80,max_width:110,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:5}];
 const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:[], score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5};
+function labErrorMessage(detail, fallback){
+  if(typeof detail === "string") return detail;
+  if(Array.isArray(detail)) return detail.map(item => {
+    const field = Array.isArray(item.loc) ? item.loc.slice(1).join(".") : "参数";
+    return field + ": " + (item.msg || JSON.stringify(item));
+  }).join("；");
+  if(detail && typeof detail === "object") return detail.message || JSON.stringify(detail);
+  return fallback;
+}
 async function apiLab(path, opts={}){
   if(LAB_TOKEN){ opts.headers = opts.headers || {}; opts.headers["X-Admin-Token"] = LAB_TOKEN; }
   opts.cache = "no-store";
@@ -1349,7 +1358,7 @@ async function apiLab(path, opts={}){
   const t = await r.text();
   let data;
   try { data = JSON.parse(t); } catch(e) { throw new Error(t || `请求失败 (${r.status})`); }
-  if(!r.ok){ throw new Error(data.detail || data.message || `请求失败 (${r.status})`); }
+  if(!r.ok){ throw new Error(labErrorMessage(data.detail || data.message, `请求失败 (${r.status})`)); }
   return data;
 }
 function labFileToBase64(file){
