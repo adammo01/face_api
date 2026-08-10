@@ -117,6 +117,10 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('function labFillProfileExample()', APP_SOURCE)
         self.assertIn('查看填写示例', APP_SOURCE)
 
+    def test_lab_parameters_use_two_columns_on_wide_screens(self):
+        self.assertIn('grid-template-columns:minmax(0,1fr) minmax(0,1fr)', APP_SOURCE)
+        self.assertIn('.lab-btns, .lab-presets, .status-text { grid-column:1 / -1; }', APP_SOURCE)
+
     def test_lab_shows_before_and_after_face_confidence(self):
         self.assertIn('id="lab-confidence-before"', APP_SOURCE)
         self.assertIn('id="lab-confidence-after"', APP_SOURCE)
