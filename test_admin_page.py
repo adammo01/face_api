@@ -125,6 +125,9 @@ class AdminPageTests(unittest.TestCase):
     def test_lab_grid_density_matches_server_validation_range(self):
         self.assertIn('id="lab-n" min="3" max="11"', APP_SOURCE)
 
+    def test_face_profiles_allow_more_than_three_ranges(self):
+        self.assertIn('face_profiles: list[dict] = Field(default_factory=list, max_length=20)', APP_SOURCE)
+
     def test_lab_parameters_use_two_columns_on_wide_screens(self):
         self.assertIn('grid-template-columns:minmax(0,1fr) minmax(0,1fr)', APP_SOURCE)
         self.assertIn('.lab-btns, .lab-presets, .status-text { grid-column:1 / -1; }', APP_SOURCE)

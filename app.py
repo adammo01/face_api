@@ -706,7 +706,7 @@ class FaceBlurRequest(BaseModel):
         pattern=r"^(pixelate|gaussian|solid|landmark|landmark_whole_face)$",
     )
     modes: list[str] = Field(default_factory=list, max_length=5)
-    face_profiles: list[dict] = Field(default_factory=list, max_length=3)
+    face_profiles: list[dict] = Field(default_factory=list, max_length=20)
     # 默认值已对齐 face_blur.py / v14r3 推荐参数 (2026-08-05)
     score_threshold: float = Field(0.52, ge=0.1, le=0.99)
     expand_ratio: float = Field(0.30, ge=0.0, le=1.0)
@@ -1756,7 +1756,7 @@ main{max-width:960px;margin:0 auto;padding:36px 22px 60px}h1{margin:0 0 8px;font
 <p>例如先高斯模糊，再叠加马赛克：<code>"modes": ["gaussian", "pixelate"]</code>。</p>
 <h2>推荐三档</h2>
 <pre>[{"name":"small","min_width":40,"max_width":59,"modes":["landmark"],"face_grid_step":12,"dot_radius":1,"grid_n":3},{"name":"medium","min_width":60,"max_width":79,"modes":["landmark_whole_face"],"face_grid_step":12,"dot_radius":2,"grid_n":4},{"name":"large","min_width":80,"max_width":110,"modes":["landmark_whole_face"],"face_grid_step":12,"dot_radius":2,"grid_n":5}]</pre>
-<h2>生效规则</h2><p><code>face_profiles</code> 为空时，所有人脸使用全局模式；不为空时，命中档位的人脸使用该档位配置，未命中时回退全局配置。想停用分档请填写 <code>[]</code>。</p>
+<h2>生效规则</h2><p><code>face_profiles</code> 为空时，所有人脸使用全局模式；不为空时，命中档位的人脸使用该档位配置，未命中时回退全局配置。最多支持 20 个区间，想停用分档请填写 <code>[]</code>。</p>
 <h2>操作步骤</h2><ol><li>在实验室选择模式或填入三档示例。</li><li>修改范围、模式和参数后点击“执行打码”。</li><li>确认结果后点击“同步到全局”，后续普通请求才会使用。</li></ol>
 </main></body></html>
 """)
