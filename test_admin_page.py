@@ -94,7 +94,8 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('onclick="labOpenPreview(this)"', APP_SOURCE)
         self.assertIn('id="lab-image-modal"', APP_SOURCE)
         self.assertIn('function labOpenPreview(image)', APP_SOURCE)
-        self.assertIn('if(event.key === "Escape") labClosePreview();', APP_SOURCE)
+        self.assertIn('if(event.key === "Escape"){', APP_SOURCE)
+        self.assertIn('labClosePreview();', APP_SOURCE)
 
     def test_lab_supports_saved_parameter_presets_and_defaults(self):
         self.assertIn('id="lab-preset"', APP_SOURCE)
@@ -106,7 +107,9 @@ class AdminPageTests(unittest.TestCase):
         self.assertIn('labSetParams(LAB_DEFAULTS);', APP_SOURCE)
 
     def test_lab_supports_multi_mode_distance_profiles(self):
-        self.assertIn('id="lab-mode" class="lab-mode-options"', APP_SOURCE)
+        self.assertIn('id="lab-mode" class="lab-mode-select"', APP_SOURCE)
+        self.assertIn('id="lab-mode-options" class="lab-mode-options" hidden', APP_SOURCE)
+        self.assertIn('function labToggleModeMenu()', APP_SOURCE)
         self.assertIn('type="checkbox" value="gaussian"', APP_SOURCE)
         self.assertIn('function labSelectedModes()', APP_SOURCE)
         self.assertIn('face_profiles', APP_SOURCE)

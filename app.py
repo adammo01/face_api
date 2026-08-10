@@ -1132,21 +1132,21 @@ def lab_page(request: Request):
     }
     * { box-sizing: border-box; }
     body { margin:0; background: var(--bg); color: var(--ink); font-family: system-ui,-apple-system,sans-serif; -webkit-font-smoothing: antialiased; }
-    .lab-wrap { max-width:none; margin:0 auto; padding:28px 100px 40px; }
-    .lab-header { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:20px; padding-bottom:14px; border-bottom:2px solid var(--line); }
-    .lab-header h2 { margin:0; font-size:26px; font-weight:700; letter-spacing:-0.3px; }
-    .lab-header .lab-badge { font-size:12px; background:var(--accent-light); color:var(--accent); padding:4px 12px; border-radius:99px; font-weight:600; }
-    .lab-grid { display:grid; grid-template-columns: minmax(0,1.55fr) minmax(350px,1fr); gap:20px; }
+    .lab-wrap { max-width:none; margin:0 auto; padding:20px 72px 32px; }
+    .lab-header { display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:14px; padding-bottom:9px; border-bottom:1px solid var(--line); }
+    .lab-header h2 { margin:0; font-size:21px; font-weight:700; letter-spacing:0; }
+    .lab-header .lab-badge { font-size:11px; background:var(--accent-light); color:var(--accent); padding:3px 9px; border-radius:99px; font-weight:600; }
+    .lab-grid { display:grid; grid-template-columns: minmax(0,1.55fr) minmax(350px,1fr); gap:14px; }
     .lab-card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px; box-shadow:0 1px 4px rgba(0,0,0,0.03); }
     [data-theme="dark"] .lab-card { box-shadow:0 1px 8px rgba(0,0,0,0.3); }
-    .lab-dropzone { border:2px dashed var(--line); border-radius:16px; padding:28px 24px 22px; text-align:center; cursor:pointer; transition:all .25s; background:var(--panel); }
+    .lab-dropzone { border:2px dashed var(--line); border-radius:10px; padding:18px 20px 15px; text-align:center; cursor:pointer; transition:all .25s; background:var(--panel); }
     .lab-dropzone:hover { border-color:var(--accent); background:var(--accent-light); transform:translateY(-1px); box-shadow:0 4px 16px rgba(0,0,0,0.06); }
     .lab-dropzone input { display:none; }
-    .lab-dropzone .dz-icon { font-size:42px; display:block; margin-bottom:10px; }
-    .lab-dropzone .dz-title { font-size:15px; font-weight:600; margin-bottom:4px; }
-    .lab-dropzone .dz-hint { font-size:12px; color:var(--muted); }
-    .lab-url-row { display:flex; gap:10px; margin-top:14px; }
-    .lab-url-row input { flex:1; padding:11px 14px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font-size:14px; transition:border-color .2s; }
+    .lab-dropzone .dz-icon { font-size:30px; display:block; margin-bottom:5px; }
+    .lab-dropzone .dz-title { font-size:13px; font-weight:600; margin-bottom:2px; }
+    .lab-dropzone .dz-hint { font-size:11px; color:var(--muted); }
+    .lab-url-row { display:flex; gap:8px; margin-top:10px; }
+    .lab-url-row input { flex:1; padding:8px 10px; border:1px solid var(--line); border-radius:7px; background:var(--panel); color:var(--ink); font-size:13px; transition:border-color .2s; }
     .lab-url-row input:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(31,122,90,0.1); }
     .lab-url-row input::placeholder { color:var(--muted); }
     .lab-preview { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:18px; }
@@ -1176,18 +1176,21 @@ def lab_page(request: Request):
     .cw-bar-fill.safe { background:var(--accent); }
     .lab-params { background:var(--panel); border:1px solid var(--line); border-radius:14px; box-shadow:0 1px 6px rgba(0,0,0,0.03); overflow:hidden; }
     [data-theme="dark"] .lab-params { box-shadow:0 1px 12px rgba(0,0,0,0.28); }
-    .lab-params-head { padding:14px 18px; border-bottom:1px solid var(--line); }
-    .lab-params-head h3 { margin:0; font-size:15px; font-weight:600; }
-    .lab-params-body { padding:14px 18px; }
-    .lab-param { margin-bottom:10px; }
+    .lab-params-head { padding:10px 14px; border-bottom:1px solid var(--line); }
+    .lab-params-head h3 { margin:0; font-size:14px; font-weight:600; }
+    .lab-params-body { padding:10px 14px; }
+    .lab-param { margin-bottom:8px; }
     .lab-param:last-child { margin-bottom:0; }
-    .lab-param label { display:flex; justify-content:space-between; align-items:center; font-size:13px; font-weight:500; margin-bottom:2px; color:var(--ink); }
-    .lab-param label span { color:var(--ink); font-weight:700; font-size:14px; font-variant-numeric:tabular-nums; background:var(--bg); padding:2px 8px; border-radius:5px; min-width:36px; text-align:center; }
+    .lab-param label { display:flex; justify-content:space-between; align-items:center; font-size:12px; font-weight:500; margin-bottom:2px; color:var(--ink); }
+    .lab-param label span { color:var(--ink); font-weight:700; font-size:12px; font-variant-numeric:tabular-nums; background:var(--bg); padding:1px 6px; border-radius:4px; min-width:32px; text-align:center; }
     .lab-param input[type=range] { width:100%; height:6px; accent-color:var(--accent); border-radius:3px; }
     .lab-param select { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font-size:14px; cursor:pointer; }
     .lab-param .hint { font-size:11px; color:var(--muted); margin-top:1px; }
-    .lab-mode-options { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
-    .lab-mode-options label { display:flex; align-items:center; gap:7px; margin:0; padding:8px 10px; border:1px solid var(--line); border-radius:7px; font-size:13px; font-weight:500; cursor:pointer; }
+    .lab-mode-select { position:relative; }
+    .lab-mode-toggle { width:100%; justify-content:space-between; padding:8px 10px; font-size:13px; }
+    .lab-mode-options { position:absolute; z-index:5; top:calc(100% + 4px); left:0; right:0; display:grid; grid-template-columns:1fr 1fr; gap:5px; padding:7px; border:1px solid var(--line); border-radius:7px; background:var(--panel); box-shadow:0 8px 20px rgba(0,0,0,.12); }
+    .lab-mode-options[hidden] { display:none; }
+    .lab-mode-options label { display:flex; align-items:center; gap:6px; margin:0; padding:6px 7px; border:1px solid var(--line); border-radius:5px; font-size:12px; font-weight:500; cursor:pointer; }
     .lab-mode-options input { width:15px; height:15px; accent-color:var(--accent); }
     .lab-json-help { margin-top:7px; font-size:12px; color:var(--muted); }
     .lab-json-help summary { cursor:pointer; }
@@ -1270,12 +1273,15 @@ def lab_page(request: Request):
           <div class="lab-params-body">
             <div class="lab-param">
               <label>打码模式（可多选，按勾选顺序叠加）</label>
-              <div id="lab-mode" class="lab-mode-options">
-                <label><input type="checkbox" value="landmark_whole_face" checked onchange="labModeChanged(this)" /> 整脸红点遮罩</label>
-                <label><input type="checkbox" value="landmark" onchange="labModeChanged(this)" /> 关键点遮罩</label>
-                <label><input type="checkbox" value="pixelate" onchange="labModeChanged(this)" /> 马赛克</label>
-                <label><input type="checkbox" value="gaussian" onchange="labModeChanged(this)" /> 高斯模糊</label>
-                <label><input type="checkbox" value="solid" onchange="labModeChanged(this)" /> 纯色遮挡</label>
+              <div id="lab-mode" class="lab-mode-select">
+                <button type="button" class="btn secondary lab-mode-toggle" onclick="labToggleModeMenu()" aria-expanded="false"><span id="lab-mode-summary">已选：整脸红点遮罩</span><span>⌄</span></button>
+                <div id="lab-mode-options" class="lab-mode-options" hidden>
+                  <label><input type="checkbox" value="landmark_whole_face" checked onchange="labModeChanged(this)" /> 整脸红点遮罩</label>
+                  <label><input type="checkbox" value="landmark" onchange="labModeChanged(this)" /> 关键点遮罩</label>
+                  <label><input type="checkbox" value="pixelate" onchange="labModeChanged(this)" /> 马赛克</label>
+                  <label><input type="checkbox" value="gaussian" onchange="labModeChanged(this)" /> 高斯模糊</label>
+                  <label><input type="checkbox" value="solid" onchange="labModeChanged(this)" /> 纯色遮挡</label>
+                </div>
               </div>
               <div class="hint">例如同时勾选“高斯模糊”和“马赛克”，会先高斯模糊，再叠加马赛克。</div>
             </div>
@@ -1375,6 +1381,14 @@ function labToggleMode(){
   const m = labSelectedModes();
   const lm = m.some(x=>x.startsWith("landmark"));
   ["lab-step","lab-dot","lab-n"].forEach(id=>document.getElementById(id).parentElement.style.display = lm?"":"none");
+  const labels = {landmark_whole_face:"整脸红点遮罩", landmark:"关键点遮罩", pixelate:"马赛克", gaussian:"高斯模糊", solid:"纯色遮挡"};
+  document.getElementById("lab-mode-summary").textContent = m.length ? "已选：" + m.map(x=>labels[x]).join("、") : "请选择打码模式";
+}
+function labToggleModeMenu(){
+  const options = document.getElementById("lab-mode-options");
+  const button = document.querySelector(".lab-mode-toggle");
+  options.hidden = !options.hidden;
+  button.setAttribute("aria-expanded", String(!options.hidden));
 }
 let labModeUserTouched = false;
 function labModeChanged(input){
@@ -1385,7 +1399,7 @@ function labModeChanged(input){
   labToggleMode();
 }
 function labSelectedModes(){
-  return Array.from(document.querySelectorAll('#lab-mode input:checked')).map(x=>x.value);
+  return Array.from(document.querySelectorAll('#lab-mode-options input:checked')).map(x=>x.value);
 }
 function labFillProfileExample(){
   document.getElementById("lab-profiles").value = JSON.stringify(LAB_PROFILE_EXAMPLE, null, 2);
@@ -1428,7 +1442,7 @@ function labSetParams(params){
     const id = {mode:"lab-mode", score_threshold:"lab-score", expand_ratio:"lab-expand", min_face_skip:"lab-minface", face_grid_step:"lab-step", dot_radius:"lab-dot", grid_n:"lab-n"}[name];
     if(name !== "mode") document.getElementById(id).value = values[name];
   });
-  const modes=values.modes||[values.mode]; document.querySelectorAll('#lab-mode input').forEach(o=>o.checked=modes.includes(o.value));
+  const modes=values.modes||[values.mode]; document.querySelectorAll('#lab-mode-options input').forEach(o=>o.checked=modes.includes(o.value));
   document.getElementById('lab-profiles').value=JSON.stringify(values.face_profiles||[],null,2);
   document.getElementById("lab-score-v").textContent = Number(values.score_threshold).toFixed(2);
   document.getElementById("lab-expand-v").textContent = Number(values.expand_ratio).toFixed(2);
@@ -1662,7 +1676,20 @@ window.addEventListener("DOMContentLoaded", () => {
   }
   labSetParams(LAB_DEFAULTS);
   labRefreshPresetOptions();
-  document.addEventListener("keydown", event => { if(event.key === "Escape") labClosePreview(); });
+  document.addEventListener("click", event => {
+    const select = document.getElementById("lab-mode");
+    if(select && !select.contains(event.target)){
+      document.getElementById("lab-mode-options").hidden = true;
+      document.querySelector(".lab-mode-toggle").setAttribute("aria-expanded", "false");
+    }
+  });
+  document.addEventListener("keydown", event => {
+    if(event.key === "Escape"){
+      labClosePreview();
+      document.getElementById("lab-mode-options").hidden = true;
+      document.querySelector(".lab-mode-toggle").setAttribute("aria-expanded", "false");
+    }
+  });
 });
 </script>
 <input type="hidden" id="lab-base64" />
