@@ -1288,7 +1288,7 @@ def lab_page(request: Request):
             <div class="lab-param">
               <label>距离分档方案</label>
               <textarea id="lab-profiles" rows="8" style="width:100%;font:12px ui-monospace,monospace;padding:8px;border:1px solid var(--line);border-radius:8px">[]</textarea>
-              <div class="hint">按原始脸宽(px)命中一档：small=40-59、medium=60-79、large=80-110。每档的 modes 和参数独立生效；未命中时使用上面的全局模式。</div>
+              <div class="hint">按原始脸宽(px)命中一档：20-39、40-60、60-80、80-110。每档的 modes 和参数独立生效；未命中时使用上面的全局模式。</div>
               <details class="lab-json-help"><summary>查看填写示例</summary><pre>{
   "name": "medium",
   "min_width": 100,
@@ -1298,7 +1298,7 @@ def lab_page(request: Request):
   "dot_radius": 2,
   "grid_n": 5
 }</pre><div class="hint">整个输入必须是数组，例如 [{...}, {...}]。modes 可填写 landmark、landmark_whole_face、pixelate、gaussian、solid。</div></details>
-              <button type="button" class="btn secondary lab-fill-example" onclick="labFillProfileExample()">填入三档示例</button>
+              <button type="button" class="btn secondary lab-fill-example" onclick="labFillProfileExample()">填入四档示例</button>
             </div>
             <div class="lab-param"><label>检测阈值 <span id="lab-score-v">0.52</span></label><input type="range" id="lab-score" min="0.3" max="1.0" step="0.01" value="0.52" oninput="document.getElementById('lab-score-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">越小越灵敏，可能有误检</div></div>
             <div class="lab-param"><label>扩框比例 <span id="lab-expand-v">0.30</span></label><input type="range" id="lab-expand" min="0" max="1.0" step="0.05" value="0.30" oninput="document.getElementById('lab-expand-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">检测框向外扩展的安全余量</div></div>
@@ -1340,7 +1340,7 @@ def lab_page(request: Request):
 const BASE = window.location.origin;
 const LAB_TOKEN = new URLSearchParams(location.search).get("token") || "";
 const LAB_PRESETS_KEY = "faceblur.lab.presets.v1";
-const LAB_PROFILE_EXAMPLE = [{name:"small",min_width:40,max_width:59,modes:["landmark"],face_grid_step:12,dot_radius:1,grid_n:3},{name:"medium",min_width:60,max_width:79,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:4},{name:"large",min_width:80,max_width:110,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:5}];
+const LAB_PROFILE_EXAMPLE = [{name:"small",min_width:20,max_width:39,modes:["landmark"],face_grid_step:13,dot_radius:1,grid_n:2},{name:"small",min_width:40,max_width:60,modes:["landmark"],face_grid_step:12,dot_radius:1,grid_n:3},{name:"medium",min_width:60,max_width:80,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:4},{name:"medium",min_width:80,max_width:110,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:5}];
 const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:[], score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5};
 function labErrorMessage(detail, fallback){
   if(typeof detail === "string") return detail;
@@ -1412,7 +1412,7 @@ function labSelectedModes(){
 }
 function labFillProfileExample(){
   document.getElementById("lab-profiles").value = JSON.stringify(LAB_PROFILE_EXAMPLE, null, 2);
-  document.getElementById("lab-status").textContent = "✓ 已填入小脸 / 中脸 / 大脸三档示例，可直接修改数值或模式";
+  document.getElementById("lab-status").textContent = "✓ 已填入四档示例，可直接修改数值或模式";
 }
 async function labCopyOutputLink(){
   const url = document.getElementById("lab-output-url").href;
@@ -1754,10 +1754,10 @@ main{max-width:960px;margin:0 auto;padding:36px 22px 60px}h1{margin:0 0 8px;font
 <p>全局参数：<code>score_threshold</code> 越低越灵敏但误检更多；<code>expand_ratio</code> 越大覆盖边缘越充分但可能遮到背景；<code>min_face_skip</code> 越大越容易跳过远景小脸，设为 <code>0</code> 表示不跳过。</p>
 <h2>可用模式</h2><ul><li><code>landmark_whole_face</code>：整脸红点遮罩</li><li><code>landmark</code>：关键点遮罩</li><li><code>gaussian</code>：高斯模糊</li><li><code>pixelate</code>：马赛克</li><li><code>solid</code>：纯色遮挡</li></ul>
 <p>例如先高斯模糊，再叠加马赛克：<code>"modes": ["gaussian", "pixelate"]</code>。</p>
-<h2>推荐三档</h2>
-<pre>[{"name":"small","min_width":40,"max_width":59,"modes":["landmark"],"face_grid_step":12,"dot_radius":1,"grid_n":3},{"name":"medium","min_width":60,"max_width":79,"modes":["landmark_whole_face"],"face_grid_step":12,"dot_radius":2,"grid_n":4},{"name":"large","min_width":80,"max_width":110,"modes":["landmark_whole_face"],"face_grid_step":12,"dot_radius":2,"grid_n":5}]</pre>
+<h2>推荐四档</h2>
+<pre>[{"name":"small","min_width":20,"max_width":39,"modes":["landmark"],"face_grid_step":13,"dot_radius":1,"grid_n":2},{"name":"small","min_width":40,"max_width":60,"modes":["landmark"],"face_grid_step":12,"dot_radius":1,"grid_n":3},{"name":"medium","min_width":60,"max_width":80,"modes":["landmark_whole_face"],"face_grid_step":12,"dot_radius":2,"grid_n":4},{"name":"medium","min_width":80,"max_width":110,"modes":["landmark_whole_face"],"face_grid_step":12,"dot_radius":2,"grid_n":5}]</pre>
 <h2>生效规则</h2><p><code>face_profiles</code> 为空时，所有人脸使用全局模式；不为空时，命中档位的人脸使用该档位配置，未命中时回退全局配置。最多支持 20 个区间，想停用分档请填写 <code>[]</code>。</p>
-<h2>操作步骤</h2><ol><li>在实验室选择模式或填入三档示例。</li><li>修改范围、模式和参数后点击“执行打码”。</li><li>确认结果后点击“同步到全局”，后续普通请求才会使用。</li></ol>
+<h2>操作步骤</h2><ol><li>在实验室选择模式或填入四档示例。</li><li>修改范围、模式和参数后点击“执行打码”。</li><li>确认结果后点击“同步到全局”，后续普通请求才会使用。</li></ol>
 </main></body></html>
 """)
 
