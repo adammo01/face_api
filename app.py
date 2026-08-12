@@ -1278,6 +1278,9 @@ def lab_page(request: Request):
                 <div id="lab-mode-options" class="lab-mode-options" hidden>
                   <label><input type="checkbox" value="landmark_whole_face" checked onchange="labModeChanged(this)" /> 整脸红点遮罩</label>
                   <label><input type="checkbox" value="landmark" onchange="labModeChanged(this)" /> 关键点遮罩</label>
+                  <label><input type="checkbox" value="landmark_whole_face_v1" onchange="labModeChanged(this)" /> 方案v1 · K6同步密度</label>
+                  <label><input type="checkbox" value="landmark_whole_face_v2" onchange="labModeChanged(this)" /> 方案v2 · 线上默认</label>
+                  <label><input type="checkbox" value="landmark_whole_face_v3" onchange="labModeChanged(this)" /> 方案v3 · K4更密</label>
                   <label><input type="checkbox" value="pixelate" onchange="labModeChanged(this)" /> 马赛克</label>
                   <label><input type="checkbox" value="gaussian" onchange="labModeChanged(this)" /> 高斯模糊</label>
                   <label><input type="checkbox" value="solid" onchange="labModeChanged(this)" /> 纯色遮挡</label>
@@ -1420,7 +1423,7 @@ function labToggleMode(){
   const m = labSelectedModes();
   const lm = m.some(x=>x.startsWith("landmark"));
   ["lab-step","lab-dot","lab-n"].forEach(id=>document.getElementById(id).parentElement.style.display = lm?"":"none");
-  const labels = {landmark_whole_face:"整脸红点遮罩", landmark:"关键点遮罩", pixelate:"马赛克", gaussian:"高斯模糊", solid:"纯色遮挡"};
+  const labels = {landmark_whole_face:"整脸红点遮罩", landmark:"关键点遮罩", landmark_whole_face_v1:"方案v1 · K6同步密度", landmark_whole_face_v2:"方案v2 · 线上默认", landmark_whole_face_v3:"方案v3 · K4更密", pixelate:"马赛克", gaussian:"高斯模糊", solid:"纯色遮挡"};
   document.getElementById("lab-mode-summary").textContent = m.length ? "已选：" + m.map(x=>labels[x]).join("、") : "请选择打码模式";
 }
 function labToggleModeMenu(){
