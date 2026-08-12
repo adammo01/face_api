@@ -703,7 +703,7 @@ class FaceBlurRequest(BaseModel):
     image_url: HttpUrl | None = None
     mode: str = Field(
         "gaussian",
-        pattern=r"^(pixelate|gaussian|solid|landmark|landmark_whole_face)$",
+        pattern=r"^(pixelate|gaussian|solid|landmark|landmark_whole_face|landmark_whole_face_v1|landmark_whole_face_v2|landmark_whole_face_v3)$",
     )
     modes: list[str] = Field(default_factory=list, max_length=5)
     face_profiles: list[dict] = Field(default_factory=list, max_length=20)
@@ -719,7 +719,6 @@ class FaceBlurRequest(BaseModel):
     parent_task_id: Optional[str] = Field(None, max_length=200, description="上游任务批次标记")
     image_base64: Optional[str] = Field(None, description="Base64 image for lab test")
     callback_url: Optional[HttpUrl] = None
-    scheme: Optional[str] = Field(None, max_length=32, description="内置方案 v1(K6)/v2(默认)/v3(更密), 显式参数优先")
 
 
 @app.exception_handler(RequestValidationError)
@@ -1929,18 +1928,19 @@ def _build_scheme_profiles(k: int) -> list[dict]:
     return profiles
 
 
-# 内置方案注册表: scheme → 参数集 (显式传入的字段优先覆盖)
-BLUR_SCHEMES: dict[str, dict] = {
-    "v1": {  # K6 同步密度 (Seedance 推荐, 4/5 通过)
-        "mode": "landmark_whole_face",
+# 内置 model 注册表: mode 枚举值 → 参数集 (显式传入的字段优先覆盖)
+# 基础模式统一为 landmark_whole_face, 密度参数由 model 决定
+BLUR_MODELS: dict[str, dict] = {
+    "landmark_whole_face_v1": {  # v1: K6 同步密度 (Seedance 推荐, 4/5 通过)
+        "base_mode": "landmark_whole_face",
         "modes": ["landmark_whole_face"],
         "face_profiles": _build_scheme_profiles(6),
         "score_threshold": 0.3,
         "expand_ratio": 0.35,
         "min_face_skip": 40,
     },
-    "v2": {  # 线上默认 (LAB_DEFAULTS)
-        "mode": "landmark_whole_face",
+    "landmark_whole_face_v2": {  # v2: 线上默认 (LAB_DEFAULTS)
+        "base_mode": "landmark_whole_face",
         "modes": ["landmark_whole_face"],
         "face_profiles": [],
         "score_threshold": 0.52,
@@ -1950,8 +1950,8 @@ BLUR_SCHEMES: dict[str, dict] = {
         "grid_n": 5,
         "min_face_skip": 40,
     },
-    "v3": {  # K4 更密 (写实特写兜底)
-        "mode": "landmark_whole_face",
+    "landmark_whole_face_v3": {  # v3: K4 更密 (写实特写兜底)
+        "base_mode": "landmark_whole_face",
         "modes": ["landmark_whole_face"],
         "face_profiles": _build_scheme_profiles(4),
         "score_threshold": 0.3,
@@ -1965,20 +1965,22 @@ BLUR_SCHEMES: dict[str, dict] = {
 def face_blur(req: FaceBlurRequest, request: Request):
     task_id = uuid.uuid4().hex
     explicit = req.model_fields_set
-    scheme = BLUR_SCHEMES.get(req.scheme or "") or {}
+    # 内置 model: 归一化为基础模式, 并注入内置参数作为默认值
+    model_cfg = BLUR_MODELS.get(req.mode) or {}
+    if model_cfg:
+        req.mode = model_cfg["base_mode"]
+        if req.modes:
+            req.modes = [BLUR_MODELS.get(m, {}).get("base_mode", m) for m in req.modes]
     effective_params = {
-        "score_threshold": req.score_threshold if "score_threshold" in explicit else scheme.get("score_threshold", _get_blur_default("score_threshold", 0.52)),
-        "expand_ratio": req.expand_ratio if "expand_ratio" in explicit else scheme.get("expand_ratio", _get_blur_default("expand_ratio", 0.30)),
-        "min_face_skip": req.min_face_skip if "min_face_skip" in explicit else int(scheme.get("min_face_skip", _get_blur_default("min_face_skip", 50))),
-        "dot_radius": req.dot_radius if "dot_radius" in explicit else int(scheme.get("dot_radius", _get_blur_default("dot_radius", 3))),
-        "face_grid_step": req.face_grid_step if "face_grid_step" in explicit else int(scheme.get("face_grid_step", _get_blur_default("face_grid_step", 14))),
-        "grid_n": req.grid_n if "grid_n" in explicit else int(scheme.get("grid_n", _get_blur_default("grid_n", 5))),
-        "modes": req.modes if "modes" in explicit and req.modes else scheme.get("modes", [req.mode]),
-        "face_profiles": req.face_profiles if "face_profiles" in explicit and req.face_profiles else scheme.get("face_profiles", _get_blur_default("face_profiles", [])),
+        "score_threshold": req.score_threshold if "score_threshold" in explicit else model_cfg.get("score_threshold", _get_blur_default("score_threshold", 0.52)),
+        "expand_ratio": req.expand_ratio if "expand_ratio" in explicit else model_cfg.get("expand_ratio", _get_blur_default("expand_ratio", 0.30)),
+        "min_face_skip": req.min_face_skip if "min_face_skip" in explicit else int(model_cfg.get("min_face_skip", _get_blur_default("min_face_skip", 50))),
+        "dot_radius": req.dot_radius if "dot_radius" in explicit else int(model_cfg.get("dot_radius", _get_blur_default("dot_radius", 3))),
+        "face_grid_step": req.face_grid_step if "face_grid_step" in explicit else int(model_cfg.get("face_grid_step", _get_blur_default("face_grid_step", 14))),
+        "grid_n": req.grid_n if "grid_n" in explicit else int(model_cfg.get("grid_n", _get_blur_default("grid_n", 5))),
+        "modes": req.modes if "modes" in explicit and req.modes else model_cfg.get("modes", [req.mode]),
+        "face_profiles": req.face_profiles if "face_profiles" in explicit and req.face_profiles else model_cfg.get("face_profiles", _get_blur_default("face_profiles", [])),
     }
-    # mode: scheme 未显式指定时生效
-    if "mode" not in explicit and "mode" in scheme:
-        req.mode = scheme["mode"]
     # E: 计算缓存 key (L1 + L2 共用)
     _cache_payload = {k:v for k,v in req.model_dump(mode="json").items() if k not in ("parent_task_id","callback_url","image_base64")}
     _cache_payload.update(effective_params)
