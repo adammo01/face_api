@@ -1375,6 +1375,20 @@ const LAB_BUILTIN_PRESETS = {
 };
 const LAB_PROFILE_EXAMPLE = [{name:"small",min_width:21,max_width:39,modes:["landmark"],face_grid_step:13,dot_radius:1,grid_n:2},{name:"small",min_width:40,max_width:60,modes:["landmark"],face_grid_step:12,dot_radius:1,grid_n:3},{name:"medium",min_width:60,max_width:80,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:4},{name:"medium",min_width:80,max_width:110,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:5}];
 const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:[], score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5};
+// 内置 model 参数 (与后端 BLUR_MODELS 一致): 勾选时同步到表单
+function labBuildProfiles(k){
+  const profiles=[];
+  for(let lo=0; lo<800; lo+=40){
+    const mid=lo+20, step=Math.max(4, Math.round(mid/k));
+    profiles.push({min_width:lo, max_width:lo+40, modes:["landmark_whole_face"], face_grid_step:step, dot_radius:Math.max(1, Math.round(step/6)), grid_n:3});
+  }
+  return profiles;
+}
+const LAB_MODEL_PARAMS = {
+  "landmark_whole_face_v1": {mode:"landmark_whole_face_v1", modes:["landmark_whole_face_v1"], face_profiles:labBuildProfiles(6), score_threshold:0.3, expand_ratio:0.35, min_face_skip:40},
+  "landmark_whole_face_v2": {mode:"landmark_whole_face_v2", modes:["landmark_whole_face_v2"], face_profiles:[], score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5},
+  "landmark_whole_face_v3": {mode:"landmark_whole_face_v3", modes:["landmark_whole_face_v3"], face_profiles:labBuildProfiles(4), score_threshold:0.3, expand_ratio:0.35, min_face_skip:40},
+};
 function labErrorMessage(detail, fallback){
   if(typeof detail === "string") return detail;
   if(Array.isArray(detail)) return detail.map(item => {
@@ -1434,6 +1448,13 @@ function labToggleModeMenu(){
 }
 let labModeUserTouched = false;
 function labModeChanged(input){
+  const mp = LAB_MODEL_PARAMS[input.value];
+  if(mp && input.checked){
+    // 勾选内置 model: 同步整套参数到表单 (否则表单里的 0.52/空 profiles 会覆盖 model 默认)
+    labSetParams(mp);
+    labModeUserTouched = false;
+    return;
+  }
   if(!labModeUserTouched && input.checked && input.value !== "landmark_whole_face"){
     document.querySelectorAll('#lab-mode input').forEach(o => { if(o.value === "landmark_whole_face") o.checked = false; });
   }
@@ -1862,6 +1883,7 @@ def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None =
     if len(img_bytes) > MAX_IMAGE_BYTES:
         raise HTTPException(413, "image too large")
     t0 = time.perf_counter()
+    _normalize_model(req)  # v1/v2/v3 → 基础模式 + 注入内置参数
     blur_params = {}
     selected_modes = req.modes or [req.mode]
     blur_params["modes"] = selected_modes
@@ -1964,16 +1986,26 @@ BLUR_MODELS: dict[str, dict] = {
 }
 
 
-@app.post("/api/face_blur")
-def face_blur(req: FaceBlurRequest, request: Request):
-    task_id = uuid.uuid4().hex
-    explicit = req.model_fields_set
-    # 内置 model: 归一化为基础模式, 并注入内置参数作为默认值
+def _normalize_model(req: FaceBlurRequest) -> dict:
+    """内置 model (v1/v2/v3): 归一化为基础模式, 并注入内置参数作为默认值 (显式字段优先)。"""
     model_cfg = BLUR_MODELS.get(req.mode) or {}
     if model_cfg:
         req.mode = model_cfg["base_mode"]
         if req.modes:
             req.modes = [BLUR_MODELS.get(m, {}).get("base_mode", m) for m in req.modes]
+        for k, v in model_cfg.items():
+            if k == "base_mode":
+                continue
+            if k not in req.model_fields_set:
+                setattr(req, k, v)
+    return model_cfg
+
+
+@app.post("/api/face_blur")
+def face_blur(req: FaceBlurRequest, request: Request):
+    task_id = uuid.uuid4().hex
+    explicit = req.model_fields_set
+    model_cfg = _normalize_model(req)
     effective_params = {
         "score_threshold": req.score_threshold if "score_threshold" in explicit else model_cfg.get("score_threshold", _get_blur_default("score_threshold", 0.52)),
         "expand_ratio": req.expand_ratio if "expand_ratio" in explicit else model_cfg.get("expand_ratio", _get_blur_default("expand_ratio", 0.30)),
