@@ -719,6 +719,7 @@ class FaceBlurRequest(BaseModel):
     parent_task_id: Optional[str] = Field(None, max_length=200, description="上游任务批次标记")
     image_base64: Optional[str] = Field(None, description="Base64 image for lab test")
     callback_url: Optional[HttpUrl] = None
+    scheme: Optional[str] = Field(None, max_length=32, description="内置方案 v1(K6)/v2(默认)/v3(更密), 显式参数优先")
 
 
 @app.exception_handler(RequestValidationError)
@@ -1340,6 +1341,36 @@ def lab_page(request: Request):
 const BASE = window.location.origin;
 const LAB_TOKEN = new URLSearchParams(location.search).get("token") || "";
 const LAB_PRESETS_KEY = "faceblur.lab.presets.v1";
+// 内置 K=6 同步密度预设 (2026-08-13 Seedance 实测 5/5 通过, 含写实图)
+const LAB_BUILTIN_PRESETS = {
+  "K6 同步密度 · Seedance 已验证 (推荐)": {
+    mode: "landmark_whole_face", modes: ["landmark_whole_face"],
+    face_profiles: [
+      {min_width:0,   max_width:40,  modes:["landmark_whole_face"], face_grid_step:4,  dot_radius:1, grid_n:3},
+      {min_width:40,  max_width:80,  modes:["landmark_whole_face"], face_grid_step:7,  dot_radius:1, grid_n:3},
+      {min_width:80,  max_width:120, modes:["landmark_whole_face"], face_grid_step:14, dot_radius:2, grid_n:3},
+      {min_width:120, max_width:160, modes:["landmark_whole_face"], face_grid_step:22, dot_radius:4, grid_n:3},
+      {min_width:160, max_width:200, modes:["landmark_whole_face"], face_grid_step:29, dot_radius:5, grid_n:3},
+      {min_width:200, max_width:240, modes:["landmark_whole_face"], face_grid_step:37, dot_radius:6, grid_n:3},
+      {min_width:240, max_width:280, modes:["landmark_whole_face"], face_grid_step:44, dot_radius:7, grid_n:3},
+      {min_width:280, max_width:320, modes:["landmark_whole_face"], face_grid_step:51, dot_radius:8, grid_n:3},
+      {min_width:320, max_width:360, modes:["landmark_whole_face"], face_grid_step:58, dot_radius:9, grid_n:3},
+      {min_width:360, max_width:400, modes:["landmark_whole_face"], face_grid_step:65, dot_radius:10, grid_n:3},
+      {min_width:400, max_width:440, modes:["landmark_whole_face"], face_grid_step:70, dot_radius:11, grid_n:3},
+      {min_width:440, max_width:480, modes:["landmark_whole_face"], face_grid_step:78, dot_radius:12, grid_n:3},
+      {min_width:480, max_width:520, modes:["landmark_whole_face"], face_grid_step:85, dot_radius:14, grid_n:3},
+      {min_width:520, max_width:560, modes:["landmark_whole_face"], face_grid_step:92, dot_radius:15, grid_n:3},
+      {min_width:560, max_width:600, modes:["landmark_whole_face"], face_grid_step:99, dot_radius:16, grid_n:3},
+      {min_width:600, max_width:640, modes:["landmark_whole_face"], face_grid_step:106, dot_radius:17, grid_n:3},
+      {min_width:640, max_width:680, modes:["landmark_whole_face"], face_grid_step:113, dot_radius:18, grid_n:3},
+      {min_width:680, max_width:720, modes:["landmark_whole_face"], face_grid_step:120, dot_radius:19, grid_n:3},
+      {min_width:720, max_width:760, modes:["landmark_whole_face"], face_grid_step:127, dot_radius:20, grid_n:3},
+      {min_width:760, max_width:800, modes:["landmark_whole_face"], face_grid_step:133, dot_radius:22, grid_n:3}
+    ],
+    score_threshold: 0.45, expand_ratio: 0.35, min_face_skip: 0,
+    face_grid_step: 33, dot_radius: 6, grid_n: 3
+  }
+};
 const LAB_PROFILE_EXAMPLE = [{name:"small",min_width:21,max_width:39,modes:["landmark"],face_grid_step:13,dot_radius:1,grid_n:2},{name:"small",min_width:40,max_width:60,modes:["landmark"],face_grid_step:12,dot_radius:1,grid_n:3},{name:"medium",min_width:60,max_width:80,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:4},{name:"medium",min_width:80,max_width:110,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:5}];
 const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:[], score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5};
 function labErrorMessage(detail, fallback){
@@ -1431,11 +1462,18 @@ function labRenderDetectionDetails(targetId, faces){
   }).join('');
 }
 function labReadPresets(){
-  try { const value = JSON.parse(localStorage.getItem(LAB_PRESETS_KEY) || "{}"); return value && typeof value === "object" ? value : {}; }
-  catch(e) { return {}; }
+  // 合并: 内置预设(只读) + 用户预设(localStorage)
+  const builtin = (typeof LAB_BUILTIN_PRESETS !== "undefined") ? LAB_BUILTIN_PRESETS : {};
+  let user = {};
+  try { const v = JSON.parse(localStorage.getItem(LAB_PRESETS_KEY) || "{}"); if (v && typeof v === "object") user = v; } catch(e) {}
+  return Object.assign({}, builtin, user);
 }
 function labWritePresets(presets){
-  try { localStorage.setItem(LAB_PRESETS_KEY, JSON.stringify(presets)); return true; }
+  // 只写用户预设(过滤掉内置 key)
+  const builtin = (typeof LAB_BUILTIN_PRESETS !== "undefined") ? LAB_BUILTIN_PRESETS : {};
+  const userOnly = {};
+  for (const k of Object.keys(presets)) { if (!builtin[k]) userOnly[k] = presets[k]; }
+  try { localStorage.setItem(LAB_PRESETS_KEY, JSON.stringify(userOnly)); return true; }
   catch(e) { document.getElementById("lab-status").textContent = "✗ 预设保存失败: 浏览器存储不可用"; return false; }
 }
 function labCurrentParams(){
@@ -1494,6 +1532,10 @@ function labDeletePreset(){
   const select = document.getElementById("lab-preset");
   const name = select.value;
   if(!name) return;
+  if(typeof LAB_BUILTIN_PRESETS !== "undefined" && LAB_BUILTIN_PRESETS[name]){
+    document.getElementById("lab-status").textContent = "✗ 内置预设不可删除 (只读)";
+    return;
+  }
   if(!confirm("确定删除预设「" + name + "」？")) return;
   const presets = labReadPresets();
   delete presets[name];
@@ -1871,20 +1913,72 @@ def healthz():
     return {"ok": True, "model_loaded": model_loaded, "pid": os.getpid()}
 
 
+def _build_scheme_profiles(k: int) -> list[dict]:
+    """K 档同步密度: 脸宽 0~800px 每 40px 一档, 共 20 档 (满足 max_length=20)。"""
+    profiles = []
+    for lo in range(0, 800, 40):
+        mid = lo + 20
+        step = max(4, round(mid / k))
+        profiles.append({
+            "min_width": lo, "max_width": lo + 40,
+            "modes": ["landmark_whole_face"],
+            "face_grid_step": step,
+            "dot_radius": max(1, round(step / 6)),
+            "grid_n": 3,
+        })
+    return profiles
+
+
+# 内置方案注册表: scheme → 参数集 (显式传入的字段优先覆盖)
+BLUR_SCHEMES: dict[str, dict] = {
+    "v1": {  # K6 同步密度 (Seedance 推荐, 4/5 通过)
+        "mode": "landmark_whole_face",
+        "modes": ["landmark_whole_face"],
+        "face_profiles": _build_scheme_profiles(6),
+        "score_threshold": 0.3,
+        "expand_ratio": 0.35,
+        "min_face_skip": 40,
+    },
+    "v2": {  # 线上默认 (LAB_DEFAULTS)
+        "mode": "landmark_whole_face",
+        "modes": ["landmark_whole_face"],
+        "face_profiles": [],
+        "score_threshold": 0.52,
+        "expand_ratio": 0.30,
+        "face_grid_step": 14,
+        "dot_radius": 3,
+        "grid_n": 5,
+        "min_face_skip": 40,
+    },
+    "v3": {  # K4 更密 (写实特写兜底)
+        "mode": "landmark_whole_face",
+        "modes": ["landmark_whole_face"],
+        "face_profiles": _build_scheme_profiles(4),
+        "score_threshold": 0.3,
+        "expand_ratio": 0.35,
+        "min_face_skip": 40,
+    },
+}
+
+
 @app.post("/api/face_blur")
 def face_blur(req: FaceBlurRequest, request: Request):
     task_id = uuid.uuid4().hex
     explicit = req.model_fields_set
+    scheme = BLUR_SCHEMES.get(req.scheme or "") or {}
     effective_params = {
-        "score_threshold": req.score_threshold if "score_threshold" in explicit else _get_blur_default("score_threshold", 0.52),
-        "expand_ratio": req.expand_ratio if "expand_ratio" in explicit else _get_blur_default("expand_ratio", 0.30),
-        "min_face_skip": req.min_face_skip if "min_face_skip" in explicit else int(_get_blur_default("min_face_skip", 50)),
-        "dot_radius": req.dot_radius if "dot_radius" in explicit else int(_get_blur_default("dot_radius", 3)),
-        "face_grid_step": req.face_grid_step if "face_grid_step" in explicit else int(_get_blur_default("face_grid_step", 14)),
-        "grid_n": req.grid_n if "grid_n" in explicit else int(_get_blur_default("grid_n", 5)),
-        "modes": req.modes if "modes" in explicit and req.modes else [req.mode],
-        "face_profiles": req.face_profiles if "face_profiles" in explicit and req.face_profiles else _get_blur_default("face_profiles", []),
+        "score_threshold": req.score_threshold if "score_threshold" in explicit else scheme.get("score_threshold", _get_blur_default("score_threshold", 0.52)),
+        "expand_ratio": req.expand_ratio if "expand_ratio" in explicit else scheme.get("expand_ratio", _get_blur_default("expand_ratio", 0.30)),
+        "min_face_skip": req.min_face_skip if "min_face_skip" in explicit else int(scheme.get("min_face_skip", _get_blur_default("min_face_skip", 50))),
+        "dot_radius": req.dot_radius if "dot_radius" in explicit else int(scheme.get("dot_radius", _get_blur_default("dot_radius", 3))),
+        "face_grid_step": req.face_grid_step if "face_grid_step" in explicit else int(scheme.get("face_grid_step", _get_blur_default("face_grid_step", 14))),
+        "grid_n": req.grid_n if "grid_n" in explicit else int(scheme.get("grid_n", _get_blur_default("grid_n", 5))),
+        "modes": req.modes if "modes" in explicit and req.modes else scheme.get("modes", [req.mode]),
+        "face_profiles": req.face_profiles if "face_profiles" in explicit and req.face_profiles else scheme.get("face_profiles", _get_blur_default("face_profiles", [])),
     }
+    # mode: scheme 未显式指定时生效
+    if "mode" not in explicit and "mode" in scheme:
+        req.mode = scheme["mode"]
     # E: 计算缓存 key (L1 + L2 共用)
     _cache_payload = {k:v for k,v in req.model_dump(mode="json").items() if k not in ("parent_task_id","callback_url","image_base64")}
     _cache_payload.update(effective_params)
