@@ -25,6 +25,17 @@ FACE_BLUR_SOURCE = Path(__file__).with_name('face_blur.py').read_text(encoding='
 
 
 class AdminPageTests(unittest.TestCase):
+    def test_download_uses_one_bounded_stream_instead_of_parallel_ranges(self):
+        self.assertIn('DOWNLOAD_TOTAL_TIMEOUT', APP_SOURCE)
+        self.assertIn('time.monotonic() - started > DOWNLOAD_TOTAL_TIMEOUT', APP_SOURCE)
+        self.assertNotIn('headers={**ua, "Range":', APP_SOURCE)
+        self.assertNotIn('NUM = 8', APP_SOURCE)
+
+    def test_lab_exposes_green_red_bar_test_mode(self):
+        self.assertIn('value="green_red_bars"', APP_SOURCE)
+        self.assertIn('绿框红条（6 条', APP_SOURCE)
+        self.assertIn('def _apply_green_red_bars', FACE_BLUR_SOURCE)
+
     def test_gallery_uses_in_page_tab_and_pagination(self):
         self.assertIn('data-tab="overview"', ADMIN_HTML)
         self.assertIn('data-tab="gallery"', ADMIN_HTML)

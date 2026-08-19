@@ -1941,6 +1941,20 @@ def face_blur(req: FaceBlurRequest, request: Request):
     task_id = uuid.uuid4().hex
     explicit = req.model_fields_set
     model_cfg = _normalize_model(req)
+    # 全局生效 modes: 显式 modes 优先, 否则 model 注册表 / 请求 mode
+    _eff_modes = req.modes if "modes" in explicit and req.modes else model_cfg.get("modes", [req.mode])
+    # face_profiles 默认值 (model 注册表 / DB settings) 只服务于 landmark_whole_face 系列:
+    #  - 请求显式传了 face_profiles (含 []) -> 尊重请求, 不注入任何默认分档
+    #  - 请求没传且全局 modes 是 landmark_whole_face 系列 -> 注入 model/DB 默认分档
+    #  - 请求没传且全局 modes 是其他模式 (green_red_bars/pixelate/gaussian/solid/landmark)
+    #    -> 不得注入 DB 遗留的 landmark 分档, 否则分档内 modes 会把全局模式覆盖成红点
+    #      (2026-08-19 回归根因: green_red_bars 请求被 DB 分档覆盖成 landmark_whole_face 红点)
+    if "face_profiles" in explicit:
+        _eff_profiles = req.face_profiles or []
+    elif any(str(m).startswith("landmark_whole_face") for m in _eff_modes):
+        _eff_profiles = model_cfg.get("face_profiles", _get_blur_default("face_profiles", []))
+    else:
+        _eff_profiles = []
     effective_params = {
         "score_threshold": req.score_threshold if "score_threshold" in explicit else model_cfg.get("score_threshold", _get_blur_default("score_threshold", 0.52)),
         "expand_ratio": req.expand_ratio if "expand_ratio" in explicit else model_cfg.get("expand_ratio", _get_blur_default("expand_ratio", 0.30)),
@@ -1948,8 +1962,8 @@ def face_blur(req: FaceBlurRequest, request: Request):
         "dot_radius": req.dot_radius if "dot_radius" in explicit else int(model_cfg.get("dot_radius", _get_blur_default("dot_radius", 3))),
         "face_grid_step": req.face_grid_step if "face_grid_step" in explicit else int(model_cfg.get("face_grid_step", _get_blur_default("face_grid_step", 14))),
         "grid_n": req.grid_n if "grid_n" in explicit else int(model_cfg.get("grid_n", _get_blur_default("grid_n", 5))),
-        "modes": req.modes if "modes" in explicit and req.modes else model_cfg.get("modes", [req.mode]),
-        "face_profiles": req.face_profiles if "face_profiles" in explicit and req.face_profiles else model_cfg.get("face_profiles", _get_blur_default("face_profiles", [])),
+        "modes": _eff_modes,
+        "face_profiles": _eff_profiles,
     }
     # E: 计算缓存 key (L1 + L2 共用)
     _cache_payload = {k:v for k,v in req.model_dump(mode="json").items() if k not in ("parent_task_id","callback_url","image_base64")}
