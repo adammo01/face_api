@@ -446,6 +446,59 @@ def _apply_landmark_whole_face_with_landmarks(region: np.ndarray,
     return out
 
 
+def _apply_green_red_bars(region: np.ndarray, bar_count: int = 6) -> np.ndarray:
+    """Draw green-framed red horizontal bars across an expanded face region.
+
+    放大版 (2026-08-19): 红条尺寸按人脸区域比例放大, 不再被 14px 卡死.
+    修复 img6/img7 高清大脸打码后仍被 Seedance 判"含真人"的问题:
+      - outer_height: 占脸高 20%, 上限 80px (原 max(4, min(14, rh*0.075)))
+      - inner_height: 红色部分占 outer 55%
+      - 覆盖范围 start_y/end_y: 0.12~0.88 (原 0.20~0.80), 盖住更多五官
+      - bar_count: 默认 6 条 (原 4 条)
+    """
+    out = region.copy()
+    rh, rw = out.shape[:2]
+    if rh == 0 or rw == 0:
+        return out
+
+    margin_x = max(2, int(rw * 0.09))
+    bar_width = max(1, rw - margin_x * 2)
+    outer_height = max(6, min(80, int(rh * 0.20)))
+    inner_height = max(2, int(outer_height * 0.55))
+    half_outer = outer_height // 2
+    half_inner = inner_height // 2
+
+    # Keep the bars inside the face area and distribute them from upper face to chin.
+    start_y = int(rh * 0.12)
+    end_y = int(rh * 0.88)
+    positions = np.linspace(start_y, end_y, num=bar_count, dtype=int)
+    for center_y in positions:
+        y1 = max(0, center_y - half_outer)
+        y2 = min(rh - 1, center_y + half_outer)
+        cv2.rectangle(out, (margin_x, y1), (margin_x + bar_width - 1, y2), (0, 190, 70), -1)
+        red_y1 = max(y1, center_y - half_inner)
+        red_y2 = min(y2, center_y + half_inner)
+        cv2.rectangle(out, (margin_x + 4, red_y1), (margin_x + bar_width - 5, red_y2), (0, 0, 255), -1)
+    return out
+
+
+def _suppress_overlapping_bar_faces(faces: List[FaceBox]) -> List[FaceBox]:
+    """Keep one box when two detections substantially cover the same face."""
+    kept: List[FaceBox] = []
+    for face in sorted(faces, key=lambda item: item.w * item.h, reverse=True):
+        duplicate = False
+        for existing in kept:
+            overlap_w = max(0, min(face.x + face.w, existing.x + existing.w) - max(face.x, existing.x))
+            overlap_h = max(0, min(face.y + face.h, existing.y + existing.h) - max(face.y, existing.y))
+            if (overlap_w / max(1, min(face.w, existing.w)) >= 0.55
+                    and overlap_h / max(1, min(face.h, existing.h)) >= 0.55):
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(face)
+    return kept
+
+
 # ---------------------------------------------------------------------------
 # 公共入口
 # ---------------------------------------------------------------------------
@@ -504,7 +557,7 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
             "faces": [...],                  # return_faces=True 时
         }
     """
-    valid_modes = set(BLUR_MODES.keys()) | {"landmark", "landmark_whole_face"}
+    valid_modes = set(BLUR_MODES.keys()) | {"landmark", "landmark_whole_face", "green_red_bars"}
     modes = list(blur_params.pop("modes", []) or [mode])
     profiles = list(blur_params.pop("face_profiles", []) or [])
     if any(m not in valid_modes for m in modes):
@@ -528,12 +581,15 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
     detector = _get_detector(score_threshold)
 
     # landmark 模式: detect_multiscale (鲁棒) + per-face detect_with_landmarks (取关键点)
-    landmark_modes = {"landmark", "landmark_whole_face"}
+    # This set uses multiscale/tiled detection for modes where missed small faces are especially visible.
+    landmark_modes = {"landmark", "landmark_whole_face", "green_red_bars"}
     uses_landmark = any(m in landmark_modes for m in modes) or any(
         m in landmark_modes for p in profiles for m in p.get("modes", [])
     )
     if uses_landmark:
         faces_list = detector.detect_multiscale(img)
+        if "green_red_bars" in modes:
+            faces_list = _suppress_overlapping_bar_faces(faces_list)
         # 密集竖图中远处人脸在整图输入里过小，使用重叠分块补检。
         short_side = min(h, w)
         long_side = max(h, w)
@@ -618,6 +674,8 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
                         dot_radius=int(profile.get("dot_radius", dot_radius)),
                         spacing=int(profile.get("face_grid_step", spacing)), color=color,
                         region_box=(bx, by, bw, bh))
+                elif face_mode == "green_red_bars":
+                    region = _apply_green_red_bars(region)
                 else:
                     region = BLUR_MODES[face_mode](region)
             img[by:by + bh, bx:bx + bw] = region
