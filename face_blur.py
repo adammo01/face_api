@@ -446,15 +446,16 @@ def _apply_landmark_whole_face_with_landmarks(region: np.ndarray,
     return out
 
 
-def _apply_green_red_bars(region: np.ndarray, bar_count: int = 6) -> np.ndarray:
+def _apply_green_red_bars(region: np.ndarray, bar_count: int = 4, bar_span: float = 0.76) -> np.ndarray:
     """Draw green-framed red horizontal bars across an expanded face region.
 
     放大版 (2026-08-19): 红条尺寸按人脸区域比例放大, 不再被 14px 卡死.
     修复 img6/img7 高清大脸打码后仍被 Seedance 判"含真人"的问题:
       - outer_height: 占脸高 20%, 上限 80px (原 max(4, min(14, rh*0.075)))
       - inner_height: 红色部分占 outer 55%
-      - 覆盖范围 start_y/end_y: 0.12~0.88 (原 0.20~0.80), 盖住更多五官
-      - bar_count: 默认 6 条 (原 4 条)
+      - 覆盖范围 start_y/end_y: 以脸中心为轴, 按 bar_span 比例展开 (默认 0.76 ≈ 原 0.12~0.88)
+      - bar_count: 默认 4 条 (原 6 条), 条数可由请求动态调整 (2~10)
+      - bar_span: 纵向覆盖范围比例 (0.3~0.95), 条数多时 outer_height 自动限幅, 防止全遮挡
     """
     out = region.copy()
     rh, rw = out.shape[:2]
@@ -464,13 +465,19 @@ def _apply_green_red_bars(region: np.ndarray, bar_count: int = 6) -> np.ndarray:
     margin_x = max(2, int(rw * 0.09))
     bar_width = max(1, rw - margin_x * 2)
     outer_height = max(6, min(80, int(rh * 0.20)))
+    # 覆盖范围以脸中心为轴展开: bar_span 越大覆盖越广, 条间距越大
+    half_span = bar_span / 2.0
+    start_y = max(0, int(rh * (0.5 - half_span)))
+    end_y = min(rh - 1, int(rh * (0.5 + half_span)))
+    # 条数较多时按平均间距限幅 (不超过间距 45%), 避免相邻红条重叠导致全脸遮挡
+    if bar_count > 1:
+        gap = (end_y - start_y) / bar_count
+        outer_height = min(outer_height, max(6, int(gap * 0.45)))
     inner_height = max(2, int(outer_height * 0.55))
     half_outer = outer_height // 2
     half_inner = inner_height // 2
 
     # Keep the bars inside the face area and distribute them from upper face to chin.
-    start_y = int(rh * 0.12)
-    end_y = int(rh * 0.88)
     positions = np.linspace(start_y, end_y, num=bar_count, dtype=int)
     for center_y in positions:
         y1 = max(0, center_y - half_outer)
@@ -675,7 +682,11 @@ def process_image(input_bytes: bytes, mode: str = "pixelate",
                         spacing=int(profile.get("face_grid_step", spacing)), color=color,
                         region_box=(bx, by, bw, bh))
                 elif face_mode == "green_red_bars":
-                    region = _apply_green_red_bars(region)
+                    region = _apply_green_red_bars(
+                        region,
+                        bar_count=int(blur_params.get("bar_count", 4)),
+                        bar_span=float(blur_params.get("bar_span", 0.76)),
+                    )
                 else:
                     region = BLUR_MODES[face_mode](region)
             img[by:by + bh, bx:bx + bw] = region

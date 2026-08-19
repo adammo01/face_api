@@ -33,8 +33,11 @@ class AdminPageTests(unittest.TestCase):
 
     def test_lab_exposes_green_red_bar_test_mode(self):
         self.assertIn('value="green_red_bars"', APP_SOURCE)
-        self.assertIn('绿框红条（6 条', APP_SOURCE)
+        self.assertIn('绿框红条（可调条数', APP_SOURCE)
         self.assertIn('def _apply_green_red_bars', FACE_BLUR_SOURCE)
+        self.assertIn('bar_count: int = Field(4, ge=2, le=10', APP_SOURCE)
+        self.assertIn('bar_span: float = Field(0.76, ge=0.3, le=0.95', APP_SOURCE)
+        self.assertIn('bar_count: int = 4, bar_span: float = 0.76', FACE_BLUR_SOURCE)
 
     def test_gallery_uses_in_page_tab_and_pagination(self):
         self.assertIn('data-tab="overview"', ADMIN_HTML)
