@@ -320,6 +320,16 @@ def _set_settings(values: dict) -> dict:
         "face_grid_step": (4, 60, int),
         "grid_n": (1, 11, int),
         "face_profiles": (None, None, list),
+        # --- 实验室同步到全局 (2026-08-20): 模式/条数/彩铅 ---
+        "mode": (None, None, str),
+        "modes": (None, None, list),
+        "bar_count": (2, 10, int),
+        "bar_span": (0.3, 0.95, float),
+        "sigma_s": (1.0, 200.0, float),
+        "sigma_r": (0.01, 1.0, float),
+        "shade_factor": (0.0, 1.0, float),
+        "saturation_boost": (0.0, 3.0, float),
+        "paper_strength": (0.0, 1.0, float),
     }
     saved = {}
     with _db() as conn:
@@ -327,7 +337,9 @@ def _set_settings(values: dict) -> dict:
             if key not in allowed:
                 continue
             lo, hi, caster = allowed[key]
-            if key == "face_profiles":
+            # JSON 文本: modes/face_profiles/mode (mode 也存 JSON 文本, 否则 _get_blur_default
+            # 的 json.loads 无法解析裸字符串 "green_red_bars", 全局回显/回退会失效)
+            if key in ("face_profiles", "modes", "mode"):
                 val = raw
                 text = json.dumps(val, ensure_ascii=False, separators=(",", ":"))
             else:
@@ -704,7 +716,7 @@ class FaceBlurRequest(BaseModel):
     image_url: HttpUrl | None = None
     mode: str = Field(
         "gaussian",
-        pattern=r"^(pixelate|gaussian|solid|landmark|landmark_whole_face|green_red_bars|landmark_whole_face_v1|landmark_whole_face_v2|landmark_whole_face_v3)$",
+        pattern=r"^(pixelate|gaussian|solid|landmark|landmark_whole_face|green_red_bars|color_pencil|landmark_whole_face_v1|landmark_whole_face_v2|landmark_whole_face_v3)$",
     )
     modes: list[str] = Field(default_factory=list, max_length=5)
     face_profiles: list[dict] = Field(default_factory=list, max_length=20)
@@ -717,9 +729,15 @@ class FaceBlurRequest(BaseModel):
     face_grid_step: int = Field(14, ge=4, le=60)
     grid_n: int = Field(5, ge=3, le=11, description="关键点附近矩阵大小 (建议 3-7)")
     # green_red_bars 模式专用参数 (2026-08-20 动态条数/间距)
-    bar_count: int = Field(4, ge=2, le=10, description="绿框红条条数")
+    bar_count: int = Field(5, ge=2, le=10, description="绿框红条条数")
     bar_span: float = Field(0.76, ge=0.3, le=0.95, description="绿框红条纵向覆盖范围比例")
-    min_face_skip: int = Field(40, ge=0, le=500, description="极小人脸跳过阈值")
+    sigma_s: float = Field(60.0, ge=1.0, le=200.0, description="彩铅平滑尺度")
+    sigma_r: float = Field(0.07, ge=0.01, le=1.0, description="彩铅边缘保留强度")
+    shade_factor: float = Field(0.05, ge=0.0, le=1.0, description="彩铅阴影强度")
+    saturation_boost: float = Field(1.3, ge=0.0, le=3.0, description="彩色饱和度倍率")
+    paper_strength: float = Field(0.15, ge=0.0, le=1.0, description="纸张纹理强度")
+    noise_strength: float = Field(0.02, ge=0.0, le=0.2, description="细微噪点强度")
+    min_face_skip: int = Field(10, ge=0, le=500, description="极小人脸跳过阈值")
     parent_task_id: Optional[str] = Field(None, max_length=200, description="上游任务批次标记")
     image_base64: Optional[str] = Field(None, description="Base64 image for lab test")
     callback_url: Optional[HttpUrl] = None
@@ -1222,6 +1240,7 @@ def lab_page(request: Request):
                   <label><input type="checkbox" value="pixelate" onchange="labModeChanged(this)" /> 马赛克</label>
                   <label><input type="checkbox" value="gaussian" onchange="labModeChanged(this)" /> 高斯模糊</label>
                   <label><input type="checkbox" value="solid" onchange="labModeChanged(this)" /> 纯色遮挡</label>
+                  <label><input type="checkbox" value="color_pencil" onchange="labModeChanged(this)" /> 彩色铅笔画（整图）</label>
                 </div>
               </div>
               <div class="hint">例如同时勾选“高斯模糊”和“马赛克”，会先高斯模糊，再叠加马赛克。</div>
@@ -1243,12 +1262,19 @@ def lab_page(request: Request):
             </div>
             <div class="lab-param"><label>检测阈值 <span id="lab-score-v">0.52</span></label><input type="range" id="lab-score" min="0.3" max="1.0" step="0.01" value="0.52" oninput="document.getElementById('lab-score-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">越小越灵敏，可能有误检</div></div>
             <div class="lab-param"><label>扩框比例 <span id="lab-expand-v">0.30</span></label><input type="range" id="lab-expand" min="0" max="1.0" step="0.05" value="0.30" oninput="document.getElementById('lab-expand-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">检测框向外扩展的安全余量</div></div>
-            <div class="lab-param"><label>跳小脸(px) <span id="lab-minface-v">50</span></label><input type="range" id="lab-minface" min="0" max="500" step="5" value="50" oninput="document.getElementById('lab-minface-v').textContent=this.value" /><div class="hint">脸宽小于此值直接跳过，0=全部打码</div></div>
+            <div class="lab-param"><label>跳小脸(px) <span id="lab-minface-v">10</span></label><input type="range" id="lab-minface" min="0" max="500" step="5" value="10" oninput="document.getElementById('lab-minface-v').textContent=this.value" /><div class="hint">脸宽小于此值直接跳过，0=全部打码</div></div>
             <div class="lab-param"><label>网格间距 <span id="lab-step-v">14</span></label><input type="range" id="lab-step" min="4" max="40" step="1" value="14" oninput="document.getElementById('lab-step-v').textContent=this.value; labStepChanged()" /><div class="hint">越小越密集</div></div>
             <div class="lab-param"><label>红点半径 <span id="lab-dot-v">3</span></label><input type="range" id="lab-dot" min="1" max="10" step="1" value="3" oninput="document.getElementById('lab-dot-v').textContent=this.value" /><div class="hint">红点大小(px)</div></div>
             <div class="lab-param"><label>网格密度N <span id="lab-n-v">5</span></label><input type="range" id="lab-n" min="3" max="11" step="1" value="5" oninput="document.getElementById('lab-n-v').textContent=this.value" /><div class="hint">关键点周围叠加层数</div></div>
-            <div class="lab-param"><label>红条条数 <span id="lab-barcount-v">4</span></label><input type="number" id="lab-barcount" min="2" max="10" step="1" value="4" oninput="document.getElementById('lab-barcount-v').textContent=this.value" /><div class="hint">绿框红条条数 (2-10)</div></div>
+            <div class="lab-param"><label>红条条数 <span id="lab-barcount-v">5</span></label><input type="number" id="lab-barcount" min="2" max="10" step="1" value="5" oninput="document.getElementById('lab-barcount-v').textContent=this.value" /><div class="hint">绿框红条条数 (2-10)</div></div>
             <div class="lab-param"><label>红条覆盖范围 <span id="lab-barspan-v">0.76</span></label><input type="number" id="lab-barspan" min="0.3" max="0.95" step="0.01" value="0.76" oninput="document.getElementById('lab-barspan-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">纵向覆盖比例 (0.3-0.95)</div></div>
+            <div id="lab-pencil-params" hidden>
+              <div class="lab-param"><label>平滑尺度 sigma_s <span id="lab-sigma-s-v">60</span></label><input type="number" id="lab-sigma-s" min="1" max="200" step="1" value="60" oninput="document.getElementById('lab-sigma-s-v').textContent=this.value" /><div class="hint">越大笔触越平滑，处理更柔和。</div></div>
+              <div class="lab-param"><label>边缘保留 sigma_r <span id="lab-sigma-r-v">0.07</span></label><input type="number" id="lab-sigma-r" min="0.01" max="1" step="0.01" value="0.07" oninput="document.getElementById('lab-sigma-r-v').textContent=this.value" /><div class="hint">越小越强调轮廓线。</div></div>
+              <div class="lab-param"><label>阴影 shade_factor <span id="lab-shade-v">0.05</span></label><input type="number" id="lab-shade" min="0" max="1" step="0.01" value="0.05" oninput="document.getElementById('lab-shade-v').textContent=this.value" /><div class="hint">彩铅阴影浓淡。</div></div>
+              <div class="lab-param"><label>饱和度倍率 <span id="lab-saturation-v">1.30</span></label><input type="number" id="lab-saturation" min="0" max="3" step="0.05" value="1.3" oninput="document.getElementById('lab-saturation-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">保留彩色效果，1.0 为不增强。</div></div>
+              <div class="lab-param"><label>纸张纹理强度 <span id="lab-paper-v">0.15</span></label><input type="number" id="lab-paper" min="0" max="1" step="0.01" value="0.15" oninput="document.getElementById('lab-paper-v').textContent=Number(this.value).toFixed(2)" /><div class="hint">纸张颗粒叠加比例。</div></div>
+            </div>
             <div class="lab-btns">
               <button class="btn primary" onclick="labTest()" id="lab-test-btn">🚀 执行打码</button>
               <button class="btn secondary" onclick="labSyncGlobal()" id="lab-sync-btn" disabled>📋 同步到全局</button>
@@ -1314,7 +1340,7 @@ const LAB_BUILTIN_PRESETS = {
   }
 };
 const LAB_PROFILE_EXAMPLE = [{name:"small",min_width:21,max_width:39,modes:["landmark"],face_grid_step:13,dot_radius:1,grid_n:2},{name:"small",min_width:40,max_width:60,modes:["landmark"],face_grid_step:12,dot_radius:1,grid_n:3},{name:"medium",min_width:60,max_width:80,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:4},{name:"medium",min_width:80,max_width:110,modes:["landmark_whole_face"],face_grid_step:12,dot_radius:2,grid_n:5}];
-const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:[], score_threshold:0.52, expand_ratio:0.30, min_face_skip:40, face_grid_step:14, dot_radius:3, grid_n:5, bar_count:4, bar_span:0.76};
+const LAB_DEFAULTS = {mode:"landmark_whole_face", modes:["landmark_whole_face"], face_profiles:[], score_threshold:0.52, expand_ratio:0.30, min_face_skip:10, face_grid_step:14, dot_radius:3, grid_n:5, bar_count:5, bar_span:0.76, sigma_s:60, sigma_r:0.07, shade_factor:0.05, saturation_boost:1.3, paper_strength:0.15};
 // 内置 model 参数 (与后端 BLUR_MODELS 一致): 勾选时同步到表单
 function labBuildProfiles(k){
   const profiles=[];
@@ -1377,9 +1403,11 @@ function labToggleMode(){
   const m = labSelectedModes();
   const lm = m.some(x=>x.startsWith("landmark"));
   const grb = m.includes("green_red_bars");
+  const pencil = m.includes("color_pencil");
   ["lab-step","lab-dot","lab-n"].forEach(id=>document.getElementById(id).parentElement.style.display = lm?"":"none");
   ["lab-barcount","lab-barspan"].forEach(id=>document.getElementById(id).parentElement.style.display = grb?"":"none");
-  const labels = {landmark_whole_face:"整脸红点遮罩", landmark:"关键点遮罩", landmark_whole_face_v1:"方案v1 · K6同步密度", landmark_whole_face_v2:"方案v2 · 线上默认", landmark_whole_face_v3:"方案v3 · K4更密", green_red_bars:"绿框红条（可调条数）", pixelate:"马赛克", gaussian:"高斯模糊", solid:"纯色遮挡"};
+  document.getElementById("lab-pencil-params").hidden = !pencil;
+  const labels = {landmark_whole_face:"整脸红点遮罩", landmark:"关键点遮罩", landmark_whole_face_v1:"方案v1 · K6同步密度", landmark_whole_face_v2:"方案v2 · 线上默认", landmark_whole_face_v3:"方案v3 · K4更密", green_red_bars:"绿框红条（可调条数）", color_pencil:"彩色铅笔画（整图）", pixelate:"马赛克", gaussian:"高斯模糊", solid:"纯色遮挡"};
   document.getElementById("lab-mode-summary").textContent = m.length ? "已选：" + m.map(x=>labels[x]).join("、") : "请选择打码模式";
 }
 function labToggleModeMenu(){
@@ -1390,6 +1418,12 @@ function labToggleModeMenu(){
 }
 let labModeUserTouched = false;
 function labModeChanged(input){
+  if(input.value === "color_pencil" && input.checked){
+    document.querySelectorAll('#lab-mode-options input').forEach(o => { if(o !== input) o.checked = false; });
+  } else if(input.value !== "color_pencil" && input.checked){
+    const pencil = document.querySelector('#lab-mode-options input[value="color_pencil"]');
+    if(pencil) pencil.checked = false;
+  }
   const mp = LAB_MODEL_PARAMS[input.value];
   if(mp && input.checked){
     // 勾选内置 model: 同步整套参数到表单 (否则表单里的 0.52/空 profiles 会覆盖 model 默认)
@@ -1446,12 +1480,12 @@ function labCurrentParams(){
   if(!Array.isArray(face_profiles)) throw new Error("距离分档必须是 JSON 数组");
   const modes=labSelectedModes();
   if(!modes.length) throw new Error("请至少选择一个打码模式");
-  return {mode:modes[0]||"gaussian", modes, face_profiles, score_threshold:Number(document.getElementById("lab-score").value), expand_ratio:Number(document.getElementById("lab-expand").value), min_face_skip:Number(document.getElementById("lab-minface").value), face_grid_step:Number(document.getElementById("lab-step").value), dot_radius:Number(document.getElementById("lab-dot").value), grid_n:Number(document.getElementById("lab-n").value), bar_count:Number(document.getElementById("lab-barcount").value), bar_span:Number(document.getElementById("lab-barspan").value)};
+  return {mode:modes[0]||"gaussian", modes, face_profiles, score_threshold:Number(document.getElementById("lab-score").value), expand_ratio:Number(document.getElementById("lab-expand").value), min_face_skip:Number(document.getElementById("lab-minface").value), face_grid_step:Number(document.getElementById("lab-step").value), dot_radius:Number(document.getElementById("lab-dot").value), grid_n:Number(document.getElementById("lab-n").value), bar_count:Number(document.getElementById("lab-barcount").value), bar_span:Number(document.getElementById("lab-barspan").value), sigma_s:Number(document.getElementById("lab-sigma-s").value), sigma_r:Number(document.getElementById("lab-sigma-r").value), shade_factor:Number(document.getElementById("lab-shade").value), saturation_boost:Number(document.getElementById("lab-saturation").value), paper_strength:Number(document.getElementById("lab-paper").value)};
 }
 function labSetParams(params){
   const values = Object.assign({}, LAB_DEFAULTS, params || {});
-  ["mode","score_threshold","expand_ratio","min_face_skip","face_grid_step","dot_radius","grid_n","bar_count","bar_span"].forEach(name => {
-    const id = {mode:"lab-mode", score_threshold:"lab-score", expand_ratio:"lab-expand", min_face_skip:"lab-minface", face_grid_step:"lab-step", dot_radius:"lab-dot", grid_n:"lab-n", bar_count:"lab-barcount", bar_span:"lab-barspan"}[name];
+  ["mode","score_threshold","expand_ratio","min_face_skip","face_grid_step","dot_radius","grid_n","bar_count","bar_span","sigma_s","sigma_r","shade_factor","saturation_boost","paper_strength"].forEach(name => {
+    const id = {mode:"lab-mode", score_threshold:"lab-score", expand_ratio:"lab-expand", min_face_skip:"lab-minface", face_grid_step:"lab-step", dot_radius:"lab-dot", grid_n:"lab-n", bar_count:"lab-barcount", bar_span:"lab-barspan", sigma_s:"lab-sigma-s", sigma_r:"lab-sigma-r", shade_factor:"lab-shade", saturation_boost:"lab-saturation", paper_strength:"lab-paper"}[name];
     if(name !== "mode") document.getElementById(id).value = values[name];
   });
   const modes=values.modes||[values.mode]; document.querySelectorAll('#lab-mode-options input').forEach(o=>o.checked=modes.includes(o.value));
@@ -1464,6 +1498,11 @@ function labSetParams(params){
   document.getElementById("lab-n-v").textContent = values.grid_n;
   document.getElementById("lab-barcount-v").textContent = values.bar_count;
   document.getElementById("lab-barspan-v").textContent = Number(values.bar_span).toFixed(2);
+  document.getElementById("lab-sigma-s-v").textContent = values.sigma_s;
+  document.getElementById("lab-sigma-r-v").textContent = Number(values.sigma_r).toFixed(2);
+  document.getElementById("lab-shade-v").textContent = Number(values.shade_factor).toFixed(2);
+  document.getElementById("lab-saturation-v").textContent = Number(values.saturation_boost).toFixed(2);
+  document.getElementById("lab-paper-v").textContent = Number(values.paper_strength).toFixed(2);
   labToggleMode();
   labModeUserTouched = false;
   document.getElementById("lab-sync-btn").disabled = true;
@@ -1539,6 +1578,11 @@ async function labTest(){
       grid_n: Number(document.getElementById("lab-n").value),
       bar_count: Number(document.getElementById("lab-barcount").value),
       bar_span: Number(document.getElementById("lab-barspan").value),
+      sigma_s: Number(document.getElementById("lab-sigma-s").value),
+      sigma_r: Number(document.getElementById("lab-sigma-r").value),
+      shade_factor: Number(document.getElementById("lab-shade").value),
+      saturation_boost: Number(document.getElementById("lab-saturation").value),
+      paper_strength: Number(document.getElementById("lab-paper").value),
     };
     if(b64) body.image_base64 = b64;
     if(url) body.image_url = url;
@@ -1581,13 +1625,22 @@ async function labTest(){
 async function labSyncGlobal(){
   if(!confirm("将当前参数同步到全局设置？\\n(对后续新建请求生效)")) return;
   let params; try { params=labCurrentParams(); } catch(e) { document.getElementById("lab-status").textContent="✗ "+e.message; return; }
+  const m = params.modes[0] || "gaussian";
   const body = {
+    mode: m, modes: params.modes, face_profiles: params.face_profiles,
     score_threshold: Number(document.getElementById("lab-score").value),
     expand_ratio: Number(document.getElementById("lab-expand").value),
     min_face_skip: Number(document.getElementById("lab-minface").value),
     face_grid_step: Number(document.getElementById("lab-step").value),
     dot_radius: Number(document.getElementById("lab-dot").value),
-    grid_n: Number(document.getElementById("lab-n").value), face_profiles: params.face_profiles,
+    grid_n: Number(document.getElementById("lab-n").value),
+    bar_count: Number(document.getElementById("lab-barcount").value),
+    bar_span: Number(document.getElementById("lab-barspan").value),
+    sigma_s: Number(document.getElementById("lab-sigma-s").value),
+    sigma_r: Number(document.getElementById("lab-sigma-r").value),
+    shade_factor: Number(document.getElementById("lab-shade").value),
+    saturation_boost: Number(document.getElementById("lab-saturation").value),
+    paper_strength: Number(document.getElementById("lab-paper").value),
   };
   try {
     await apiLab("/api/admin/settings", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
@@ -1836,9 +1889,16 @@ def lab_test(req: FaceBlurRequest, request: Request, authorization: str | None =
     blur_params["face_profiles"] = req.face_profiles
     blur_params["bar_count"] = req.bar_count
     blur_params["bar_span"] = req.bar_span
+    blur_params.update({
+        "sigma_s": req.sigma_s, "sigma_r": req.sigma_r,
+        "shade_factor": req.shade_factor,
+        "saturation_boost": req.saturation_boost,
+        "paper_strength": req.paper_strength,
+        "noise_strength": req.noise_strength,
+    })
     if req.mode == "landmark_whole_face":
         blur_params.update({
-            "adaptive": False, "min_face_skip": req.min_face_skip if req.min_face_skip is not None else 50,
+            "adaptive": False, "min_face_skip": req.min_face_skip if req.min_face_skip is not None else 10,
             "dot_radius": req.dot_radius, "face_grid_step": req.face_grid_step,
             "grid_n": req.grid_n or 5, "spacing": req.face_grid_step,
         })
@@ -1952,10 +2012,22 @@ def _normalize_model(req: FaceBlurRequest) -> dict:
 @app.post("/api/face_blur")
 def face_blur(req: FaceBlurRequest, request: Request):
     task_id = uuid.uuid4().hex
-    explicit = req.model_fields_set
+    # 快照: _normalize_model 内部 setattr 会原地改写 req.model_fields_set, 必须先拷贝 (2026-08-20 T-A/B/C)
+    explicit = set(req.model_fields_set)
     model_cfg = _normalize_model(req)
-    # 全局生效 modes: 显式 modes 优先, 否则 model 注册表 / 请求 mode
-    _eff_modes = req.modes if "modes" in explicit and req.modes else model_cfg.get("modes", [req.mode])
+    # 全局生效 modes:
+    #  - 显式 modes 优先
+    #  - 仅"纯普通请求"(mode/modes 均未显式) 才回退 DB settings 全局 modes
+    #  - 显式 mode 请求保持原语义, 不被 DB 全局覆盖 (2026-08-20 T-A/B/C 保守改法)
+    if "modes" in explicit and req.modes:
+        _eff_modes = req.modes
+    elif "mode" not in explicit:
+        _eff_modes = _get_blur_default("modes", model_cfg.get("modes", [req.mode]))
+    else:
+        _eff_modes = model_cfg.get("modes", [req.mode])
+    # 归一化: DB/显式 modes 里的预设名 (landmark_whole_face_v1/v2/v3) 转 base_mode,
+    # 否则 process_image 校验会 ValueError -> 400 (2026-08-20 P1)
+    _eff_modes = [BLUR_MODELS.get(m, {}).get("base_mode", m) for m in _eff_modes]
     # face_profiles 默认值 (model 注册表 / DB settings) 只服务于 landmark_whole_face 系列:
     #  - 请求显式传了 face_profiles (含 []) -> 尊重请求, 不注入任何默认分档
     #  - 请求没传且全局 modes 是 landmark_whole_face 系列 -> 注入 model/DB 默认分档
@@ -1971,12 +2043,19 @@ def face_blur(req: FaceBlurRequest, request: Request):
     effective_params = {
         "score_threshold": req.score_threshold if "score_threshold" in explicit else model_cfg.get("score_threshold", _get_blur_default("score_threshold", 0.52)),
         "expand_ratio": req.expand_ratio if "expand_ratio" in explicit else model_cfg.get("expand_ratio", _get_blur_default("expand_ratio", 0.30)),
-        "min_face_skip": req.min_face_skip if "min_face_skip" in explicit else int(model_cfg.get("min_face_skip", _get_blur_default("min_face_skip", 50))),
+        "min_face_skip": req.min_face_skip if "min_face_skip" in explicit else int(model_cfg.get("min_face_skip", _get_blur_default("min_face_skip", 10))),
         "dot_radius": req.dot_radius if "dot_radius" in explicit else int(model_cfg.get("dot_radius", _get_blur_default("dot_radius", 3))),
         "face_grid_step": req.face_grid_step if "face_grid_step" in explicit else int(model_cfg.get("face_grid_step", _get_blur_default("face_grid_step", 14))),
         "grid_n": req.grid_n if "grid_n" in explicit else int(model_cfg.get("grid_n", _get_blur_default("grid_n", 5))),
-        "bar_count": req.bar_count if "bar_count" in explicit else int(model_cfg.get("bar_count", _get_blur_default("bar_count", 4))),
+        "bar_count": req.bar_count if "bar_count" in explicit else int(model_cfg.get("bar_count", _get_blur_default("bar_count", 5))),
         "bar_span": req.bar_span if "bar_span" in explicit else float(model_cfg.get("bar_span", _get_blur_default("bar_span", 0.76))),
+        # 彩铅参数全局生效 (2026-08-20 P2): 与 bar_count/bar_span 相同回退模式
+        "sigma_s": req.sigma_s if "sigma_s" in explicit else float(model_cfg.get("sigma_s", _get_blur_default("sigma_s", 60.0))),
+        "sigma_r": req.sigma_r if "sigma_r" in explicit else float(model_cfg.get("sigma_r", _get_blur_default("sigma_r", 0.07))),
+        "shade_factor": req.shade_factor if "shade_factor" in explicit else float(model_cfg.get("shade_factor", _get_blur_default("shade_factor", 0.05))),
+        "saturation_boost": req.saturation_boost if "saturation_boost" in explicit else float(model_cfg.get("saturation_boost", _get_blur_default("saturation_boost", 1.3))),
+        "paper_strength": req.paper_strength if "paper_strength" in explicit else float(model_cfg.get("paper_strength", _get_blur_default("paper_strength", 0.15))),
+        "noise_strength": req.noise_strength,
         "modes": _eff_modes,
         "face_profiles": _eff_profiles,
     }
@@ -2152,6 +2231,9 @@ def _face_blur_impl(task_id: str, req: FaceBlurRequest, request: Request, *, cac
             blur_params["bar_count"] = params["bar_count"]
         if "bar_span" in params:
             blur_params["bar_span"] = params["bar_span"]
+        for key in ("sigma_s", "sigma_r", "shade_factor", "saturation_boost", "paper_strength", "noise_strength"):
+            if key in params:
+                blur_params[key] = params[key]
         result, process_attempts, process_error = _run_with_retries(
             "process_image",
             lambda: process_image(
@@ -2389,7 +2471,7 @@ def admin_summary(
         "settings": {
             "score_threshold": _get_blur_default("score_threshold", 0.52),
             "expand_ratio": _get_blur_default("expand_ratio", 0.30),
-            "min_face_skip": _get_blur_default("min_face_skip", 50),
+            "min_face_skip": _get_blur_default("min_face_skip", 10),
             "dot_radius": _get_blur_default("dot_radius", 3),
             "face_grid_step": _get_blur_default("face_grid_step", 14),
             "grid_n": _get_blur_default("grid_n", 5),
@@ -2521,6 +2603,19 @@ class AdminSettingsRequest(BaseModel):
     face_grid_step: Optional[int] = Field(default=None, ge=4, le=60)
     grid_n: Optional[int] = Field(default=None, ge=1, le=11)
     face_profiles: Optional[list[dict]] = None
+    # --- 实验室同步到全局 (2026-08-20): 校验范围与 FaceBlurRequest 对齐 ---
+    mode: Optional[str] = Field(
+        default=None,
+        pattern=r"^(pixelate|gaussian|solid|landmark|landmark_whole_face|green_red_bars|color_pencil|landmark_whole_face_v1|landmark_whole_face_v2|landmark_whole_face_v3)$",
+    )
+    modes: Optional[list[str]] = Field(default=None, max_length=5)
+    bar_count: Optional[int] = Field(default=None, ge=2, le=10)
+    bar_span: Optional[float] = Field(default=None, ge=0.3, le=0.95)
+    sigma_s: Optional[float] = Field(default=None, ge=1.0, le=200.0)
+    sigma_r: Optional[float] = Field(default=None, ge=0.01, le=1.0)
+    shade_factor: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    saturation_boost: Optional[float] = Field(default=None, ge=0.0, le=3.0)
+    paper_strength: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 @app.get("/api/admin/settings")
@@ -2541,11 +2636,20 @@ def admin_get_settings(
             "image_ttl_hours": _get_int_setting("image_ttl_hours", IMAGE_TTL_HOURS, 1, 24 * 365),
             "score_threshold": _get_blur_default("score_threshold", 0.52),
             "expand_ratio": _get_blur_default("expand_ratio", 0.30),
-            "min_face_skip": _get_blur_default("min_face_skip", 50),
+            "min_face_skip": _get_blur_default("min_face_skip", 10),
             "dot_radius": _get_blur_default("dot_radius", 3),
             "face_grid_step": _get_blur_default("face_grid_step", 14),
             "grid_n": _get_blur_default("grid_n", 5),
             "face_profiles": _get_blur_default("face_profiles", []),
+            "mode": _get_blur_default("mode", "gaussian"),
+            "modes": _get_blur_default("modes", ["gaussian"]),
+            "bar_count": _get_blur_default("bar_count", 5),
+            "bar_span": _get_blur_default("bar_span", 0.76),
+            "sigma_s": _get_blur_default("sigma_s", 60.0),
+            "sigma_r": _get_blur_default("sigma_r", 0.07),
+            "shade_factor": _get_blur_default("shade_factor", 0.05),
+            "saturation_boost": _get_blur_default("saturation_boost", 1.3),
+            "paper_strength": _get_blur_default("paper_strength", 0.15),
             "inflight_tasks": inflight,
         },
     }
@@ -2562,7 +2666,7 @@ def admin_set_settings(
     _require_admin(request, authorization, x_admin_token, token)
     values = {k: v for k, v in payload.model_dump().items() if v is not None}
     saved = _set_settings(values)
-    if any(key in values for key in ("score_threshold", "expand_ratio", "min_face_skip", "dot_radius", "face_grid_step", "grid_n", "face_profiles")):
+    if any(key in values for key in ("score_threshold", "expand_ratio", "min_face_skip", "dot_radius", "face_grid_step", "grid_n", "face_profiles", "mode", "modes", "bar_count", "bar_span", "sigma_s", "sigma_r", "shade_factor", "saturation_boost", "paper_strength")):
         _cache_clear()
         _bump_cache_epoch()
         with _db() as conn:
@@ -2957,7 +3061,7 @@ ADMIN_HTML = """
       const s = d.settings || {};
       document.getElementById('s-score').value = s.score_threshold ?? 0.52;
       document.getElementById('s-expand').value = s.expand_ratio ?? 0.30;
-      document.getElementById('s-minface').value = s.min_face_skip ?? 50;
+      document.getElementById('s-minface').value = s.min_face_skip ?? 10;
       document.getElementById('s-dot').value = s.dot_radius ?? 3;
       document.getElementById('s-step').value = s.face_grid_step ?? 14;
     }
@@ -3276,7 +3380,7 @@ ADMIN_HTML = """
         document.getElementById('s-ttl').value = s.image_ttl_hours ?? 72;
         document.getElementById('s-score').value = s.score_threshold ?? 0.52;
         document.getElementById('s-expand').value = s.expand_ratio ?? 0.30;
-        document.getElementById('s-minface').value = s.min_face_skip ?? 50;
+        document.getElementById('s-minface').value = s.min_face_skip ?? 10;
         document.getElementById('s-dot').value = s.dot_radius ?? 3;
         document.getElementById('s-step').value = s.face_grid_step ?? 14;
       } catch(e) { setStatus(`全局设置加载失败: ${e.message}`); }
